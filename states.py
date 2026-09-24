@@ -14,3 +14,5 @@ class OrderFlow(StatesGroup):
 
 class AdminFlow(StatesGroup):
     waiting_reject_reason = State()
+    waiting_broadcast_message = State()
+    waiting_broadcast_confirm = State()
