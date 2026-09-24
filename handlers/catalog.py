@@ -10,51 +10,76 @@ from utils import show_screen
 router = Router()
 
 
-@router.callback_query(F.data.startswith("menu:"))
-async def cb_choose_menu(callback: CallbackQuery, state: FSMContext):
-    menu_name = callback.data.split(":", 1)[1]
-    services = db.get_services_by_menu(menu_name)
-    await state.update_data(menu_name=menu_name)
-    await state.set_state(OrderFlow.choosing_service)
-
-    if not services:
-        await callback.answer("لا توجد خدمات متاحة حاليًا في هذا القسم", show_alert=True)
-        return
-
-    extra_note = ""
+def _menu_note(menu_name: str) -> str:
     if "ألعاب" in menu_name:
-        extra_note = "\n\n⚡ الشحن يتم عن طريق الـ ID فقط.\n🕐 مدة التنفيذ: من 1 إلى 10 دقائق كحد أقصى."
-    elif "بطاقات" in menu_name:
-        extra_note = "\n\n✅ جميع البطاقات تعمل في سوريا ومجربة، وأي خلل فيها راجع الدعم لتستعيد أموالك فورًا."
-    elif "اشتراك" in menu_name:
-        extra_note = (
+        return "\n\n⚡ الشحن يتم عن طريق الـ ID فقط.\n🕐 مدة التنفيذ: من 1 إلى 10 دقائق كحد أقصى."
+    if "بطاقات" in menu_name:
+        return "\n\n✅ جميع البطاقات تعمل في سوريا ومجربة، وأي خلل فيها راجع الدعم لتستعيد أموالك فورًا."
+    if "اشتراك" in menu_name:
+        return (
             "\n\n🤖 تفعيل كافة أدوات الذكاء الصناعي واشتراكات التطبيقات كافة.\n"
             "في حال لم يكن طلبك مدرجًا بالقائمة، تواصل مع الدعم.\n"
             "✅ كافة الاشتراكات مكفولة تمامًا."
         )
+    return ""
+
+
+async def show_services_screen(bot, chat_id, state: FSMContext, menu_name: str, page: int = 0):
+    services = db.get_services_by_menu(menu_name)
+    await state.update_data(menu_name=menu_name, services_page=page)
+    await state.set_state(OrderFlow.choosing_service)
+
+    if not services:
+        await show_screen(
+            bot=bot, chat_id=chat_id, state=state,
+            text=f"لا توجد خدمات متاحة حاليًا في قائمة {menu_name}.",
+            reply_markup=kb.kb_back_main(),
+        )
+        return
 
     await show_screen(
-        bot=callback.bot,
-        chat_id=callback.message.chat.id,
-        state=state,
-        text=f"اختر من قائمة {menu_name}:{extra_note}",
-        reply_markup=kb.kb_services(services),
+        bot=bot, chat_id=chat_id, state=state,
+        text=f"اختر من قائمة {menu_name}:{_menu_note(menu_name)}",
+        reply_markup=kb.kb_services(services, page=page),
     )
+
+
+async def show_options_screen(bot, chat_id, state: FSMContext, page: int = 0):
+    data = await state.get_data()
+    service_id = data.get("service_id")
+    service_name = data.get("service_name")
+    options = db.get_options(service_id)
+    await state.update_data(options_page=page)
+    await state.set_state(OrderFlow.choosing_option)
+
+    await show_screen(
+        bot=bot, chat_id=chat_id, state=state,
+        text=f"اختر الخيار المطلوب لخدمة {service_name}:",
+        reply_markup=kb.kb_options(options, page=page),
+    )
+
+
+@router.callback_query(F.data.startswith("menu:"))
+async def cb_choose_menu(callback: CallbackQuery, state: FSMContext):
+    menu_name = callback.data.split(":", 1)[1]
+    await show_services_screen(callback.bot, callback.message.chat.id, state, menu_name, page=0)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("svcpage:"))
+async def cb_services_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    await show_services_screen(callback.bot, callback.message.chat.id, state, data.get("menu_name"), page=page)
     await callback.answer()
 
 
 @router.callback_query(F.data == "backservices")
 async def cb_back_services(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    menu_name = data.get("menu_name")
-    services = db.get_services_by_menu(menu_name)
-    await state.set_state(OrderFlow.choosing_service)
-    await show_screen(
-        bot=callback.bot,
-        chat_id=callback.message.chat.id,
-        state=state,
-        text=f"اختر من قائمة {menu_name}:",
-        reply_markup=kb.kb_services(services),
+    await show_services_screen(
+        callback.bot, callback.message.chat.id, state,
+        data.get("menu_name"), page=data.get("services_page", 0),
     )
     await callback.answer()
 
@@ -67,14 +92,12 @@ async def cb_choose_service(callback: CallbackQuery, state: FSMContext):
         await callback.answer("هذه الخدمة غير متاحة حاليًا", show_alert=True)
         return
 
-    options = db.get_options(service_id)
     await state.update_data(
         service_id=service_id,
         service_name=service.get("name_ar"),
         service_type=service.get("type"),
         service_extra_prompt=service.get("extra_prompt", ""),
     )
-    await state.set_state(OrderFlow.choosing_option)
 
     s_type = service.get("type")
     if s_type == "GAME":
@@ -85,14 +108,31 @@ async def cb_choose_service(callback: CallbackQuery, state: FSMContext):
         intro = f"اختر الخيار المطلوب لخدمة {service.get('name_ar')}:"
 
     image = service.get("image") or None
+    options = db.get_options(service_id)
+    await state.update_data(options_page=0)
+    await state.set_state(OrderFlow.choosing_option)
     await show_screen(
         bot=callback.bot,
         chat_id=callback.message.chat.id,
         state=state,
         text=intro,
         photo=image,
-        reply_markup=kb.kb_options(options, service_id),
+        reply_markup=kb.kb_options(options, page=0),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("optpage:"))
+async def cb_options_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":", 1)[1])
+    await show_options_screen(callback.bot, callback.message.chat.id, state, page=page)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "backoptions")
+async def cb_back_options(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await show_options_screen(callback.bot, callback.message.chat.id, state, page=data.get("options_page", 0))
     await callback.answer()
 
 
@@ -185,17 +225,3 @@ async def show_payment_methods(bot, chat_id, state: FSMContext, note: str = ""):
         bot=bot, chat_id=chat_id, state=state,
         text=text, reply_markup=kb.kb_payment_methods(methods),
     )
-
-
-@router.callback_query(F.data == "backoptions")
-async def cb_back_options(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    service_id = data.get("service_id")
-    options = db.get_options(service_id)
-    await state.set_state(OrderFlow.choosing_option)
-    await show_screen(
-        bot=callback.bot, chat_id=callback.message.chat.id, state=state,
-        text=f"اختر الخيار المطلوب لخدمة {data.get('service_name')}:",
-        reply_markup=kb.kb_options(options, service_id),
-    )
-    await callback.answer()
