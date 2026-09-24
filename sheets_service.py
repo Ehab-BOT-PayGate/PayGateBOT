@@ -173,7 +173,7 @@ def create_order(**fields) -> str:
         fields.get("extra_info", ""),
         "قيد المراجعة",
     ]
-    _ws["Orders"].append_row(row, value_input_option="USER_ENTERED")
+    _ws["Orders"].append_row(row, value_input_option="RAW")
     return order_id
 
 
@@ -230,7 +230,18 @@ def get_customer_number(user_id: int) -> tuple[int, bool]:
 
     _ws["Customers"].append_row(
         [str(user_id), next_num, datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-        value_input_option="USER_ENTERED",
+        value_input_option="RAW",
     )
     return next_num, True
 
+
+def get_all_customer_ids() -> list[int]:
+    """يرجع كل معرفات المستخدمين المسجلين (لاستخدامها بالرسائل الجماعية)."""
+    ids = []
+    for r in _ws["Customers"].get_all_records():
+        uid = r.get("user_id")
+        try:
+            ids.append(int(uid))
+        except (TypeError, ValueError):
+            continue
+    return ids
