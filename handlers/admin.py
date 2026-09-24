@@ -1,8 +1,12 @@
+import asyncio
+
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 import sheets_service as db
+import keyboards as kb
 from states import AdminFlow
 
 router = Router()
@@ -79,3 +83,67 @@ async def msg_reject_reason(message: Message, state: FSMContext):
         pass
 
     await message.answer(f"تم رفض الطلب #{order_id} وإبلاغ العميل.")
+
+
+# ---------------- رسائل جماعية (Broadcast) ----------------
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        return  # تجاهل تام لغير المدير، حتى لا يعرف أحد أن هذا الأمر موجود أصلًا
+
+    await state.set_state(AdminFlow.waiting_broadcast_message)
+    await message.answer(
+        "📢 أرسل الآن الرسالة التي تريد إرسالها لكل الزبائن (نص أو صورة مع تعليق).\n"
+        "أو أرسل /cancel لإلغاء العملية."
+    )
+
+
+@router.message(AdminFlow.waiting_broadcast_message, Command("cancel"))
+async def cmd_broadcast_cancel_early(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("تم الإلغاء.")
+
+
+@router.message(AdminFlow.waiting_broadcast_message)
+async def msg_broadcast_content(message: Message, state: FSMContext):
+    await state.update_data(broadcast_chat_id=message.chat.id, broadcast_message_id=message.message_id)
+    await state.set_state(AdminFlow.waiting_broadcast_confirm)
+
+    customer_count = len(db.get_all_customer_ids())
+    await message.answer(
+        f"👆 هذه معاينة الرسالة كما ستصل للزبائن.\nسيتم إرسالها لعدد {customer_count} زبون.\nهل تريد المتابعة؟",
+        reply_markup=kb.kb_broadcast_confirm(),
+    )
+
+
+@router.callback_query(AdminFlow.waiting_broadcast_confirm, F.data == "broadcast:cancel")
+async def cb_broadcast_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("تم إلغاء الإرسال الجماعي.")
+    await callback.answer()
+
+
+@router.callback_query(AdminFlow.waiting_broadcast_confirm, F.data == "broadcast:confirm")
+async def cb_broadcast_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    src_chat_id = data.get("broadcast_chat_id")
+    src_message_id = data.get("broadcast_message_id")
+    await state.clear()
+
+    await callback.message.edit_text("⏳ جاري الإرسال... سأخبرك بالنتيجة عند الانتهاء.")
+    await callback.answer()
+
+    customer_ids = db.get_all_customer_ids()
+    sent, failed = 0, 0
+    for uid in customer_ids:
+        try:
+            await callback.bot.copy_message(chat_id=uid, from_chat_id=src_chat_id, message_id=src_message_id)
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+
+    await callback.bot.send_message(
+        chat_id=src_chat_id,
+        text=f"✅ انتهى الإرسال الجماعي.\nوصلت: {sent}\nفشلت: {failed} (غالبًا بسبب حظر الزبون للبوت)",
+    )
