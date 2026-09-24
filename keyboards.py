@@ -26,8 +26,9 @@ def kb_main_menu(menus: list[str]) -> InlineKeyboardMarkup:
 def _paginate(rows: list[list[InlineKeyboardButton]], items, page: int, item_button, page_callback_prefix: str, back_callback: str) -> InlineKeyboardMarkup:
     start = page * PAGE_SIZE
     page_items = items[start:start + PAGE_SIZE]
-    for item in page_items:
-        rows.append([item_button(item)])
+    for i in range(0, len(page_items), 2):
+        pair = page_items[i:i + 2]
+        rows.append([item_button(item) for item in pair])
 
     nav_row = []
     if page > 0:
