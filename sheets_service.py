@@ -185,6 +185,27 @@ def get_settings() -> dict:
     return {str(r.get("key", "")).strip(): str(r.get("value", "")).strip() for r in rows if r.get("key")}
 
 
+def set_setting(key: str, value: str) -> None:
+    """يحفظ/يحدّث قيمة إعداد واحد في شيت Settings (يضيف صفًا جديدًا إن لم يكن المفتاح موجودًا).
+    تُستخدم مثلًا لحفظ WELCOME_IMAGE عبر أمر /setwelcome."""
+    ws = _ws["Settings"]
+    headers = _retry_on_quota(ws.row_values, 1)
+    try:
+        key_col = headers.index("key") + 1
+        val_col = headers.index("value") + 1
+    except ValueError:
+        return
+    cell = _retry_on_quota(ws.find, key, in_column=key_col)
+    if cell:
+        _retry_on_quota(ws.update_cell, cell.row, val_col, value)
+    else:
+        row = [""] * len(headers)
+        row[key_col - 1] = key
+        row[val_col - 1] = value
+        _retry_on_quota(ws.append_row, row, value_input_option="RAW")
+    _cache.pop("Settings", None)
+
+
 # ---------------- الخدمات ----------------
 def get_menus() -> list[str]:
     """يبني قائمة الأزرار الرئيسية تلقائيًا من عمود menu_name لكل خدمة فعّالة."""
