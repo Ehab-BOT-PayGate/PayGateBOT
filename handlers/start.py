@@ -18,14 +18,15 @@ WELCOME_TEXT = (
 )
 
 
-async def send_main_menu(bot, chat_id, state: FSMContext):
+async def send_main_menu(bot, chat_id, state: FSMContext, page: int = 0):
     menus = db.get_menus()
+    await state.update_data(main_page=page)
     await show_screen(
         bot=bot,
         chat_id=chat_id,
         state=state,
         text="اختر القسم الذي تريده:",
-        reply_markup=kb.kb_main_menu(menus),
+        reply_markup=kb.kb_main_menu(menus, page=page),
     )
 
 
@@ -83,3 +84,16 @@ async def cb_support(callback: CallbackQuery):
     link = settings.get("SUPPORT_LINK", "")
     await callback.answer()
     await callback.message.answer(f"🆘 للتواصل مع الدعم:\n{link}")
+
+
+@router.callback_query(F.data.startswith("mainpage:"))
+async def cb_main_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":", 1)[1])
+    await send_main_menu(callback.bot, callback.message.chat.id, state, page=page)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "noop")
+async def cb_noop(callback: CallbackQuery):
+    """زر رقم الصفحة في أعلى شريط التنقل — لا يفعل شيئًا سوى إسكات الرسالة."""
+    await callback.answer()
