@@ -10,11 +10,9 @@ from utils import show_screen, is_subscribed
 router = Router()
 
 WELCOME_TEXT = (
-    "👋 أهلًا بك في متجرنا!\n\n"
-    "نقدّم لك خدمتين:\n"
-    "🎮 شحن ألعاب\n"
-    "💳 بطاقات شحن عالمية\n\n"
-    "اختر ما يناسبك من القائمة بالأسفل 👇"
+    "أهلا بك {name} في متجرنا.\n"
+    "اختر ما يناسبك من القائمة في الأسفل\n"
+    "إن لم تجد طلبك هنا لا تتردد في التواصل مع الدعم."
 )
 
 
@@ -30,14 +28,15 @@ async def send_main_menu(bot, chat_id, state: FSMContext, page: int = 0):
     )
 
 
-async def build_welcome_text(user_id: int) -> str:
+async def build_welcome_text(user_id: int, name: str) -> str:
+    text = WELCOME_TEXT.format(name=name)
     number, is_new = db.get_customer_number(user_id)
     if is_new:
         return (
-            WELCOME_TEXT
+            text
             + f"\n\n🎉 أنت الزبون رقم #{number} الذي ينضم إلى متجرنا — انضم إلينا آلاف العملاء الراضين عن خدمتنا وثقتهم بنا!"
         )
-    return WELCOME_TEXT
+    return text
 
 
 @router.message(CommandStart())
@@ -54,7 +53,7 @@ async def cmd_start(message: Message, state: FSMContext):
         return
 
     # رسالة الترحيب ثابتة: تُرسل دائمًا كرسالة جديدة منفصلة ولا تدخل نظام تحديث الشاشات
-    await message.answer(await build_welcome_text(message.from_user.id))
+    await message.answer(await build_welcome_text(message.from_user.id, message.from_user.full_name))
     await send_main_menu(message.bot, message.chat.id, state)
 
 
@@ -63,7 +62,7 @@ async def cb_checksub(callback: CallbackQuery, state: FSMContext):
     if await is_subscribed(callback.bot, callback.from_user.id):
         await callback.message.delete()
         await callback.answer("تم التحقق ✅")
-        await callback.message.answer(await build_welcome_text(callback.from_user.id))
+        await callback.message.answer(await build_welcome_text(callback.from_user.id, callback.from_user.full_name))
         await send_main_menu(callback.bot, callback.message.chat.id, state)
     else:
         await callback.answer("لم يتم العثور على اشتراكك بعد ❌", show_alert=True)
