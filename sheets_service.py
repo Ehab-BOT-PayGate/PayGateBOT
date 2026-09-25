@@ -1,3 +1,4 @@
+# sheets_service.py
 """
 طبقة الوصول إلى Google Sheet.
 كل شيء (الإعدادات، الخدمات، الأسعار، طرق الدفع، أكواد الخصم، الطلبات) يُقرأ ويُكتب من هنا.
@@ -46,7 +47,9 @@ ORDERS_HEADERS = [
     "service_name", "option_label", "base_price", "discount_code",
     "final_price", "payment_method", "proof", "extra_info", "status",
 ]
-CUSTOMERS_HEADERS = ["user_id", "customer_number", "timestamp", "blocked"]
+# referred_by: معرف الزبون الذي أحال هذا المستخدم (فارغ إن لم يُحَل من أحد)
+# ref_rewarded: TRUE بعد إشعار الأدمن/الداعي بأول عملية شراء مدفوعة (لمنع التكرار)
+CUSTOMERS_HEADERS = ["user_id", "customer_number", "timestamp", "blocked", "referred_by", "ref_rewarded"]
 
 
 def _ensure_header(ws, expected: list[str]) -> bool:
@@ -106,7 +109,9 @@ def cleanup_customers() -> None:
         r = seen[uid]
         ts = r[2] if len(r) > 2 else ""
         blocked = r[3] if len(r) > 3 else "FALSE"
-        new_rows.append([uid, str(start_num + i), ts, blocked])
+        referred_by = r[4] if len(r) > 4 else ""
+        ref_rewarded = r[5] if len(r) > 5 else "FALSE"
+        new_rows.append([uid, str(start_num + i), ts, blocked, referred_by, ref_rewarded])
 
     changed = len(new_rows) != len(rows)
     if not changed:
@@ -115,16 +120,19 @@ def cleanup_customers() -> None:
             a_num = str(a[1]).strip() if len(a) > 1 else ""
             a_ts = a[2] if len(a) > 2 else ""
             a_blocked = a[3] if len(a) > 3 else "FALSE"
-            if a_uid != b[0] or a_num != b[1] or a_ts != b[2] or a_blocked != b[3]:
+            a_ref_by = a[4] if len(a) > 4 else ""
+            a_ref_rewarded = a[5] if len(a) > 5 else "FALSE"
+            if (a_uid != b[0] or a_num != b[1] or a_ts != b[2] or a_blocked != b[3]
+                    or a_ref_by != b[4] or a_ref_rewarded != b[5]):
                 changed = True
                 break
     if not changed:
         return
 
     last_row = len(rows) + 1
-    ws.batch_clear([f"A2:D{last_row}"])
+    ws.batch_clear([f"A2:F{last_row}"])
     if new_rows:
-        ws.update(f"A2:D{len(new_rows) + 1}", new_rows, value_input_option="USER_ENTERED")
+        ws.update(f"A2:F{len(new_rows) + 1}", new_rows, value_input_option="USER_ENTERED")
     _cache.pop("Customers", None)
 
 
@@ -312,9 +320,21 @@ def find_orders_by_proof(proof: str) -> list[dict]:
     return [r for r in _ws["Orders"].get_all_records() if str(r.get("proof", "")).strip() == proof]
 
 
+def count_accepted_orders(user_id) -> int:
+    """يحسب عدد طلبات الزبون التي وصلت لحالة مقبول أو منفَّذ.
+    تُستخدم لمعرفة إن كانت عملية القبول الحالية هي أول عملية شراء مدفوعة له (نظام الإحالة)."""
+    paid_statuses = {"مقبول ✅", "منفَّذ 📦"}
+    count = 0
+    for r in _ws["Orders"].get_all_records():
+        if str(r.get("user_id")) == str(user_id) and str(r.get("status")) in paid_statuses:
+            count += 1
+    return count
+
+
 # ---------------- رقم الزبون التسلسلي (لأول محادثة فقط) ----------------
-def get_customer_number(user_id: int) -> tuple[int, bool]:
-    """يرجع (الرقم, هل هو زبون جديد). أول زبون ياخد رقم البداية من Settings (افتراضيًا 1310)."""
+def get_customer_number(user_id: int, referred_by: str = "") -> tuple[int, bool]:
+    """يرجع (الرقم, هل هو زبون جديد). أول زبون ياخد رقم البداية من Settings (افتراضيًا 1310).
+    referred_by: معرف الزبون الذي أحال هذا المستخدم — يُحفظ فقط عند إنشاء الزبون لأول مرة."""
     records = _ws["Customers"].get_all_records()
     for r in records:
         if str(r.get("user_id")) == str(user_id):
@@ -339,10 +359,33 @@ def get_customer_number(user_id: int) -> tuple[int, bool]:
     next_num = max(existing_numbers) + 1 if existing_numbers else start_num
 
     _ws["Customers"].append_row(
-        [str(user_id), next_num, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "FALSE"],
+        [str(user_id), next_num, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "FALSE", str(referred_by or ""), "FALSE"],
         value_input_option="USER_ENTERED",
     )
     return next_num, True
+
+
+def get_customer(user_id) -> dict | None:
+    """يرجع سجل الزبون كاملًا (يشمل referred_by وref_rewarded) أو None إن لم يوجد."""
+    for r in _ws["Customers"].get_all_records():
+        if str(r.get("user_id")) == str(user_id):
+            return r
+    return None
+
+
+def mark_referral_rewarded(user_id) -> None:
+    """تُستدعى بعد إشعار الأدمن/الداعي بأن هذا الزبون المُحال أتم أول عملية شراء مدفوعة،
+    لمنع تكرار الإشعار عند أي طلبات لاحقة له."""
+    cell = _ws["Customers"].find(str(user_id), in_column=1)
+    if not cell:
+        return
+    headers = _ws["Customers"].row_values(1)
+    try:
+        col = headers.index("ref_rewarded") + 1
+    except ValueError:
+        return
+    _ws["Customers"].update_cell(cell.row, col, "TRUE")
+    _cache.pop("Customers", None)
 
 
 # ---------------- البث الجماعي ----------------
@@ -364,4 +407,3 @@ def mark_customer_blocked(user_id) -> None:
         return
     _ws["Customers"].update_cell(cell.row, col, "TRUE")
     _cache.pop("Customers", None)
-
