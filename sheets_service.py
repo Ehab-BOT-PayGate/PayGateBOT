@@ -1,11 +1,11 @@
 """
-\u0637\u0628\u0642\u0629 \u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 Google Sheet.
-\u0643\u0644 \u0634\u064a\u0621 (\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a\u060c \u0627\u0644\u062e\u062f\u0645\u0627\u062a\u060c \u0627\u0644\u0623\u0633\u0639\u0627\u0631\u060c \u0637\u0631\u0642 \u0627\u0644\u062f\u0641\u0639\u060c \u0623\u0643\u0648\u0627\u062f \u0627\u0644\u062e\u0635\u0645\u060c \u0627\u0644\u0637\u0644\u0628\u0627\u062a) \u064a\u064f\u0642\u0631\u0623 \u0648\u064a\u064f\u0643\u062a\u0628 \u0645\u0646 \u0647\u0646\u0627.
-\u062a\u0633\u062a\u062e\u062f\u0645 \u0643\u0627\u0634 \u0628\u0633\u064a\u0637 (TTL) \u0644\u0644\u0642\u0631\u0627\u0621\u0627\u062a \u0627\u0644\u0645\u062a\u0643\u0631\u0631\u0629 \u062d\u062a\u0649 \u064a\u0628\u0642\u0649 \u0631\u062f \u0627\u0644\u0628\u0648\u062a \u0633\u0631\u064a\u0639\u064b\u0627 \u062c\u062f\u064b\u0627
-\u0648\u0644\u0627 \u0646\u0633\u062a\u0647\u0644\u0643 \u062d\u0635\u0629 Google Sheets API \u0628\u0633\u0631\u0639\u0629.
-\u062a\u062d\u062a\u0648\u064a \u0623\u064a\u0636\u064b\u0627 \u0639\u0644\u0649 \u0625\u0639\u0627\u062f\u0629 \u0645\u062d\u0627\u0648\u0644\u0629 \u062a\u0644\u0642\u0627\u0626\u064a\u0629 (retry with backoff) \u0639\u0646\u062f \u062a\u062c\u0627\u0648\u0632 \u062d\u0635\u0629
-\u0627\u0644\u0642\u0631\u0627\u0621\u0629 (\u062e\u0637\u0623 429)\u060c \u0628\u062f\u0644 \u0623\u0646 \u064a\u0646\u0647\u0627\u0631 \u0627\u0644\u0628\u0648\u062a \u0641\u0648\u0631\u064b\u0627 \u0648\u064a\u062f\u062e\u0644 \u0628\u062d\u0644\u0642\u0629 \u0625\u0639\u0627\u062f\u0629 \u062a\u0634\u063a\u064a\u0644 \u0645\u062a\u0643\u0631\u0631\u0629
-\u062a\u0633\u062a\u0647\u0644\u0643 \u0627\u0644\u062d\u0635\u0629 \u0623\u0643\u062b\u0631 \u0648\u0623\u0643\u062b\u0631.
+طبقة الوصول إلى Google Sheet.
+كل شيء (الإعدادات، الخدمات، الأسعار، طرق الدفع، أكواد الخصم، الطلبات) يُقرأ ويُكتب من هنا.
+تستخدم كاش بسيط (TTL) للقراءات المتكررة حتى يبقى رد البوت سريعًا جدًا
+ولا نستهلك حصة Google Sheets API بسرعة.
+تحتوي أيضًا على إعادة محاولة تلقائية (retry with backoff) عند تجاوز حصة
+القراءة (خطأ 429)، بدل أن ينهار البوت فورًا ويدخل بحلقة إعادة تشغيل متكررة
+تستهلك الحصة أكثر وأكثر.
 """
 import time
 import random
@@ -29,9 +29,9 @@ SCOPES = [
 
 
 def _retry_on_quota(func, *args, max_retries=5, base_delay=4, **kwargs):
-    """\u064a\u0646\u0641\u0630 \u0623\u064a \u0627\u0633\u062a\u062f\u0639\u0627\u0621 \u0644\u0640 gspread\u060c \u0648\u0625\u0646 \u0641\u0634\u0644 \u0628\u0633\u0628\u0628 \u062a\u062c\u0627\u0648\u0632 \u0627\u0644\u062d\u0635\u0629 (429) \u064a\u0639\u064a\u062f \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629
-    \u0645\u0639 \u062a\u0623\u062e\u064a\u0631 \u0645\u062a\u0632\u0627\u064a\u062f (4s, 8s, 16s, 32s, 64s) \u0628\u062f\u0644 \u0645\u0627 \u064a\u0646\u0647\u0627\u0631 \u0627\u0644\u0628\u0648\u062a \u0641\u0648\u0631\u064b\u0627.
-    \u0623\u064a \u062e\u0637\u0623 \u0622\u062e\u0631 \u063a\u064a\u0631 429 \u064a\u064f\u0631\u0641\u0639 \u0641\u0648\u0631\u064b\u0627 \u0643\u0645\u0627 \u0647\u0648."""
+    """ينفذ أي استدعاء لـ gspread، وإن فشل بسبب تجاوز الحصة (429) يعيد المحاولة
+    مع تأخير متزايد (4s, 8s, 16s, 32s, 64s) بدل ما ينهار البوت فورًا.
+    أي خطأ آخر غير 429 يُرفع فورًا كما هو."""
     for attempt in range(max_retries):
         try:
             return func(*args, **kwargs)
@@ -40,34 +40,41 @@ def _retry_on_quota(func, *args, max_retries=5, base_delay=4, **kwargs):
             if not is_quota or attempt == max_retries - 1:
                 raise
             delay = base_delay * (2 ** attempt)
-            logger.warning("\u062a\u062c\u0627\u0648\u0632 \u062d\u0635\u0629 Google Sheets (429)\u060c \u0625\u0639\u0627\u062f\u0629 \u0645\u062d\u0627\u0648\u0644\u0629 \u062e\u0644\u0627\u0644 %ss (\u0645\u062d\u0627\u0648\u0644\u0629 %s/%s)",
+            logger.warning("تجاوز حصة Google Sheets (429)، إعادة محاولة خلال %ss (محاولة %s/%s)",
                             delay, attempt + 1, max_retries)
             time.sleep(delay)
 
 
-# ---------------- \u0627\u0644\u0627\u062a\u0635\u0627\u0644 \u0627\u0644\u0623\u0648\u0644\u064a (\u0645\u0639 \u0625\u0639\u0627\u062f\u0629 \u0645\u062d\u0627\u0648\u0644\u0629 \u0639\u0646\u062f \u062a\u062c\u0627\u0648\u0632 \u0627\u0644\u062d\u0635\u0629) ----------------
+# ---------------- الاتصال الأولي (مع إعادة محاولة عند تجاوز الحصة) ----------------
+# ملاحظة: بدل ما نطلب كل شيت على حدة (7 طلبات منفصلة)، نطلب كل الشيتات
+# دفعة واحدة عبر worksheets() — طلب واحد فقط بدل 7. هذا يقلل استهلاك الحصة
+# بشكل كبير عند كل إعادة تشغيل للبوت (مهم جدًا لو حصل Crash loop).
 _creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=SCOPES)
 _gc = gspread.authorize(_creds)
 _sheet = _retry_on_quota(_gc.open_by_key, GOOGLE_SHEET_ID)
 
-_ws = {}
-for _name in ("Settings", "Services", "Options", "PaymentMethods", "DiscountCodes", "Orders", "Customers"):
-    _ws[_name] = _retry_on_quota(_sheet.worksheet, _name)
+_SHEET_NAMES = ("Settings", "Services", "Options", "PaymentMethods", "DiscountCodes", "Orders", "Customers")
+_all_ws = {ws.title: ws for ws in _retry_on_quota(_sheet.worksheets)}
+_ws = {name: _all_ws[name] for name in _SHEET_NAMES if name in _all_ws}
 
-# \u0643\u0627\u0634 \u0642\u0635\u064a\u0631 \u0627\u0644\u0623\u0645\u062f \u0644\u0644\u0642\u0631\u0627\u0621\u0627\u062a \u0627\u0644\u0645\u062a\u0643\u0631\u0631\u0629. \u0645\u062f\u0629 \u0623\u0637\u0648\u0644 = \u0637\u0644\u0628\u0627\u062a \u0623\u0642\u0644 \u0644\u062c\u0648\u062c\u0644 = \u0645\u0642\u0627\u0648\u0645\u0629 \u0623\u0643\u0628\u0631 \u0644\u062a\u062c\u0627\u0648\u0632 \u0627\u0644\u062d\u0635\u0629.
+_missing = [name for name in _SHEET_NAMES if name not in _ws]
+if _missing:
+    logger.warning("الشيتات التالية غير موجودة في الملف: %s", _missing)
+
+# كاش قصير الأمد للقراءات المتكررة. مدة أطول = طلبات أقل لجوجل = مقاومة أكبر لتجاوز الحصة.
 _cache = TTLCache(maxsize=32, ttl=30)
 
-# ---------------- \u0625\u0635\u0644\u0627\u062d \u0635\u0641 \u0627\u0644\u0639\u0646\u0627\u0648\u064a\u0646 \u062a\u0644\u0642\u0627\u0626\u064a\u064b\u0627 ----------------
-# \u0628\u0639\u0636 \u0627\u0644\u0634\u064a\u062a\u0627\u062a \u0642\u062f \u062a\u064f\u0646\u0634\u0623 \u062f\u0648\u0646 \u0635\u0641 \u0639\u0646\u0627\u0648\u064a\u0646 (\u0627\u0644\u0635\u0641 \u0627\u0644\u0623\u0648\u0644 = \u0628\u064a\u0627\u0646\u0627\u062a \u0641\u0639\u0644\u064a\u0629)\u060c \u0645\u0627 \u064a\u0645\u0646\u0639
-# get_all_records \u0645\u0646 \u0627\u0644\u0639\u0645\u0644 \u0628\u0634\u0643\u0644 \u0635\u062d\u064a\u062d. \u0647\u0630\u0647 \u0627\u0644\u062f\u0627\u0644\u0629 \u062a\u062a\u0623\u0643\u062f \u0645\u0646 \u0648\u062c\u0648\u062f \u0635\u0641 \u0627\u0644\u0639\u0646\u0627\u0648\u064a\u0646
-# \u0627\u0644\u0635\u062d\u064a\u062d \u0641\u0648\u0642 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a\u060c \u0648\u062a\u0636\u064a\u0641\u0647 \u062a\u0644\u0642\u0627\u0626\u064a\u064b\u0627 \u0639\u0646\u062f \u0627\u0644\u062d\u0627\u062c\u0629 \u062f\u0648\u0646 \u062d\u0630\u0641 \u0623\u064a \u0628\u064a\u0627\u0646\u0627\u062a \u0645\u0648\u062c\u0648\u062f\u0629.
+# ---------------- إصلاح صف العناوين تلقائيًا ----------------
+# بعض الشيتات قد تُنشأ دون صف عناوين (الصف الأول = بيانات فعلية)، ما يمنع
+# get_all_records من العمل بشكل صحيح. هذه الدالة تتأكد من وجود صف العناوين
+# الصحيح فوق البيانات، وتضيفه تلقائيًا عند الحاجة دون حذف أي بيانات موجودة.
 ORDERS_HEADERS = [
     "order_id", "timestamp", "user_id", "username", "full_name",
     "service_name", "option_label", "base_price", "discount_code",
     "final_price", "payment_method", "proof", "extra_info", "status",
 ]
-# referred_by: \u0645\u0639\u0631\u0641 \u0627\u0644\u0632\u0628\u0648\u0646 \u0627\u0644\u0630\u064a \u0623\u062d\u0627\u0644 \u0647\u0630\u0627 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645 (\u0641\u0627\u0631\u063a \u0625\u0646 \u0644\u0645 \u064a\u064f\u062d\u064e\u0644 \u0645\u0646 \u0623\u062d\u062f)
-# ref_rewarded: TRUE \u0628\u0639\u062f \u0625\u0634\u0639\u0627\u0631 \u0627\u0644\u0623\u062f\u0645\u0646/\u0627\u0644\u062f\u0627\u0639\u064a \u0628\u0623\u0648\u0644 \u0639\u0645\u0644\u064a\u0629 \u0634\u0631\u0627\u0621 \u0645\u062f\u0641\u0648\u0639\u0629 (\u0644\u0645\u0646\u0639 \u0627\u0644\u062a\u0643\u0631\u0627\u0631)
+# referred_by: معرف الزبون الذي أحال هذا المستخدم (فارغ إن لم يُحَل من أحد)
+# ref_rewarded: TRUE بعد إشعار الأدمن/الداعي بأول عملية شراء مدفوعة (لمنع التكرار)
 CUSTOMERS_HEADERS = ["user_id", "customer_number", "timestamp", "blocked", "referred_by", "ref_rewarded"]
 
 
@@ -79,9 +86,9 @@ def _ensure_header(ws, expected: list[str]) -> bool:
     normalized = [str(c).strip() for c in first_row]
     if normalized[: len(expected)] == expected:
         return False
-    # \u0625\u0646 \u0643\u0627\u0646 \u0635\u0641 \u0627\u0644\u0639\u0646\u0627\u0648\u064a\u0646 \u0645\u0648\u062c\u0648\u062f\u064b\u0627 \u0648\u0635\u062d\u064a\u062d\u064b\u0627 \u0644\u0643\u0646 \u0646\u0627\u0642\u0635 \u0623\u0639\u0645\u062f\u0629 \u062c\u062f\u064a\u062f\u0629 \u0641\u064a \u0646\u0647\u0627\u064a\u062a\u0647
-    # (\u0645\u062b\u0644 \u062a\u0631\u0642\u064a\u0629 \u0633\u0627\u0628\u0642\u0629 \u0623\u0636\u0627\u0641\u062a \u0639\u0645\u0648\u062f "blocked")\u060c \u0623\u0643\u0645\u0644 \u0627\u0644\u0623\u0639\u0645\u062f\u0629 \u0627\u0644\u0646\u0627\u0642\u0635\u0629 \u0641\u0642\u0637
-    # \u062f\u0648\u0646 \u0625\u062f\u0631\u0627\u062c \u0635\u0641 \u062c\u062f\u064a\u062f \u0641\u0648\u0642 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a.
+    # إن كان صف العناوين موجودًا وصحيحًا لكن ناقص أعمدة جديدة في نهايته
+    # (مثل ترقية سابقة أضافت عمود "blocked")، أكمل الأعمدة الناقصة فقط
+    # دون إدراج صف جديد فوق البيانات.
     if normalized and expected[: len(normalized)] == normalized:
         for i in range(len(normalized), len(expected)):
             _retry_on_quota(ws.update_cell, 1, i + 1, expected[i])
@@ -91,7 +98,7 @@ def _ensure_header(ws, expected: list[str]) -> bool:
 
 
 def ensure_all_headers() -> None:
-    """\u062a\u064f\u0633\u062a\u062f\u0639\u0649 \u0645\u0631\u0629 \u0639\u0646\u062f \u0625\u0642\u0644\u0627\u0639 \u0627\u0644\u0628\u0648\u062a. \u062a\u064f\u0635\u0644\u062d \u0635\u0641\u0648\u0641 \u0627\u0644\u0639\u0646\u0627\u0648\u064a\u0646 \u0627\u0644\u0646\u0627\u0642\u0635\u0629 \u0641\u064a Orders \u0648Customers."""
+    """تُستدعى مرة عند إقلاع البوت. تُصلح صفوف العناوين الناقصة في Orders وCustomers."""
     changed_orders = _ensure_header(_ws["Orders"], ORDERS_HEADERS)
     changed_customers = _ensure_header(_ws["Customers"], CUSTOMERS_HEADERS)
     if changed_orders or changed_customers:
@@ -99,9 +106,9 @@ def ensure_all_headers() -> None:
 
 
 def cleanup_customers() -> None:
-    """\u062a\u064f\u0633\u062a\u062f\u0639\u0649 \u0645\u0631\u0629 \u0639\u0646\u062f \u0625\u0642\u0644\u0627\u0639 \u0627\u0644\u0628\u0648\u062a. \u062a\u062d\u0630\u0641 \u062a\u0643\u0631\u0627\u0631 \u0627\u0644\u0632\u0628\u0627\u0626\u0646 (\u0646\u0641\u0633 user_id \u0639\u062f\u0629 \u0645\u0631\u0627\u062a)
-    \u0648\u062a\u064f\u0639\u064a\u062f \u062a\u0631\u0642\u064a\u0645\u0647\u0645 \u062a\u0633\u0644\u0633\u0644\u064a\u064b\u0627 \u062d\u0633\u0628 \u0623\u0648\u0644 \u0638\u0647\u0648\u0631. \u0622\u0645\u0646\u0629 \u0644\u0644\u062a\u0634\u063a\u064a\u0644 \u0641\u064a \u0643\u0644 \u0645\u0631\u0629: \u0644\u0627 \u062a\u064f\u063a\u064a\u0651\u0631
-    \u0634\u064a\u0626\u064b\u0627 \u0625\u0646 \u0643\u0627\u0646\u062a \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a \u0645\u0631\u062a\u0628\u0629 \u0623\u0635\u0644\u064b\u0627."""
+    """تُستدعى مرة عند إقلاع البوت. تحذف تكرار الزبائن (نفس user_id عدة مرات)
+    وتُعيد ترقيمهم تسلسليًا حسب أول ظهور. آمنة للتشغيل في كل مرة: لا تُغيّر
+    شيئًا إن كانت البيانات مرتبة أصلًا."""
     ws = _ws["Customers"]
     data = _retry_on_quota(ws.get_all_values)
     if len(data) <= 1:
@@ -169,18 +176,18 @@ def clear_cache():
 
 
 def _truthy(v) -> bool:
-    return str(v).strip().upper() in ("TRUE", "1", "YES", "\u0646\u0639\u0645", "\u0635\u062d", "ACTIVE")
+    return str(v).strip().upper() in ("TRUE", "1", "YES", "نعم", "صح", "ACTIVE")
 
 
-# ---------------- \u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a ----------------
+# ---------------- الإعدادات ----------------
 def get_settings() -> dict:
     rows = _records("Settings")
     return {str(r.get("key", "")).strip(): str(r.get("value", "")).strip() for r in rows if r.get("key")}
 
 
-# ---------------- \u0627\u0644\u062e\u062f\u0645\u0627\u062a ----------------
+# ---------------- الخدمات ----------------
 def get_menus() -> list[str]:
-    """\u064a\u0628\u0646\u064a \u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0623\u0632\u0631\u0627\u0631 \u0627\u0644\u0631\u0626\u064a\u0633\u064a\u0629 \u062a\u0644\u0642\u0627\u0626\u064a\u064b\u0627 \u0645\u0646 \u0639\u0645\u0648\u062f menu_name \u0644\u0643\u0644 \u062e\u062f\u0645\u0629 \u0641\u0639\u0651\u0627\u0644\u0629."""
+    """يبني قائمة الأزرار الرئيسية تلقائيًا من عمود menu_name لكل خدمة فعّالة."""
     rows = [r for r in _records("Services") if _truthy(r.get("active"))]
     rows.sort(key=lambda r: (_to_num(r.get("sort_order")), str(r.get("menu_name"))))
     seen = []
@@ -211,7 +218,7 @@ def get_service_by_id(service_id: str) -> dict | None:
     return None
 
 
-# ---------------- \u0627\u0644\u0643\u0645\u064a\u0627\u062a / \u0627\u0644\u0623\u0633\u0639\u0627\u0631 ----------------
+# ---------------- الكميات / الأسعار ----------------
 def get_options(service_id: str) -> list[dict]:
     rows = [r for r in _records("Options") if _truthy(r.get("active")) and str(r.get("service_id")) == str(service_id)]
     rows.sort(key=lambda r: _to_num(r.get("sort_order")))
@@ -225,7 +232,7 @@ def get_option_by_id(option_id: str) -> dict | None:
     return None
 
 
-# ---------------- \u0637\u0631\u0642 \u0627\u0644\u062f\u0641\u0639 ----------------
+# ---------------- طرق الدفع ----------------
 def get_payment_methods() -> list[dict]:
     rows = [r for r in _records("PaymentMethods") if _truthy(r.get("active"))]
     rows.sort(key=lambda r: _to_num(r.get("sort_order")))
@@ -239,7 +246,7 @@ def get_payment_method_by_id(pm_id: str) -> dict | None:
     return None
 
 
-# ---------------- \u0623\u0643\u0648\u0627\u062f \u0627\u0644\u062e\u0635\u0645 ----------------
+# ---------------- أكواد الخصم ----------------
 def validate_discount(code: str) -> dict | None:
     code = code.strip().upper()
     for r in _records("DiscountCodes"):
@@ -266,20 +273,20 @@ def increment_discount_usage(code: str):
     _cache.pop("DiscountCodes", None)
 
 
-# ---------------- \u0627\u0644\u0637\u0644\u0628\u0627\u062a ----------------
-# \u0627\u0633\u062a\u0628\u0639\u0627\u062f \u0627\u0644\u062d\u0631\u0648\u0641 \u0627\u0644\u0645\u062a\u0634\u0627\u0628\u0647\u0629 \u0645\u0639 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 (O \u064a\u0634\u0628\u0647 0\u060c I \u064a\u0634\u0628\u0647 1) \u0644\u062a\u0642\u0644\u064a\u0644 \u0627\u0644\u0623\u062e\u0637\u0627\u0621
-# \u0639\u0646\u062f \u0643\u062a\u0627\u0628\u0629 \u0631\u0642\u0645 \u0627\u0644\u0637\u0644\u0628 \u064a\u062f\u0648\u064a\u064b\u0627 \u0644\u0644\u062f\u0639\u0645.
+# ---------------- الطلبات ----------------
+# استبعاد الحروف المتشابهة مع الأرقام (O يشبه 0، I يشبه 1) لتقليل الأخطاء
+# عند كتابة رقم الطلب يدويًا للدعم.
 _ORDER_ID_LETTERS = [c for c in string.ascii_uppercase if c not in ("O", "I")]
 
 
 def _new_order_id() -> str:
-    """\u0631\u0642\u0645 \u0637\u0644\u0628 \u0642\u0635\u064a\u0631 \u0648\u0639\u0634\u0648\u0627\u0626\u064a \u0648\u0641\u0631\u064a\u062f: \u062d\u0631\u0641 + 6 \u0623\u0631\u0642\u0627\u0645\u060c \u0645\u062b\u0644 K482915."""
+    """رقم طلب قصير وعشوائي وفريد: حرف + 6 أرقام، مثل K482915."""
     existing = {str(r.get("order_id")) for r in _records("Orders")}
     for _ in range(50):
         candidate = random.choice(_ORDER_ID_LETTERS) + "".join(random.choices(string.digits, k=6))
         if candidate not in existing:
             return candidate
-    # \u0627\u062d\u062a\u064a\u0627\u0637\u064a \u0634\u0628\u0647 \u0645\u0633\u062a\u062d\u064a\u0644 \u0627\u0644\u062d\u062f\u0648\u062b: \u0623\u0636\u0641 \u0628\u0635\u0645\u0629 \u0632\u0645\u0646\u064a\u0629 \u0644\u0636\u0645\u0627\u0646 \u0639\u062f\u0645 \u0627\u0644\u062a\u0643\u0631\u0627\u0631
+    # احتياطي شبه مستحيل الحدوث: أضف بصمة زمنية لضمان عدم التكرار
     return random.choice(_ORDER_ID_LETTERS) + "".join(random.choices(string.digits, k=6)) + datetime.now().strftime("%S")
 
 
@@ -299,7 +306,7 @@ def create_order(**fields) -> str:
         fields.get("payment_method", ""),
         fields.get("proof", ""),
         fields.get("extra_info", ""),
-        "\u0642\u064a\u062f \u0627\u0644\u0645\u0631\u0627\u062c\u0639\u0629",
+        "قيد المراجعة",
     ]
     _retry_on_quota(_ws["Orders"].append_row, row, value_input_option="USER_ENTERED")
     _cache.pop("Orders", None)
@@ -333,8 +340,8 @@ def get_orders_by_user(user_id: int, limit: int = 10) -> list[dict]:
 
 
 def find_orders_by_proof(proof: str) -> list[dict]:
-    """\u064a\u0628\u062d\u062b \u0639\u0646 \u0643\u0644 \u0627\u0644\u0637\u0644\u0628\u0627\u062a \u0627\u0644\u062a\u064a \u0627\u0633\u062a\u064f\u062e\u062f\u0645 \u0641\u064a\u0647\u0627 \u0646\u0641\u0633 \u0631\u0642\u0645 \u0627\u0644\u0639\u0645\u0644\u064a\u0629 (\u0646\u0635 \u0641\u0642\u0637\u060c \u0644\u064a\u0633 \u0635\u0648\u0631).
-    \u064a\u064f\u0633\u062a\u062e\u062f\u0645 \u0644\u062a\u0646\u0628\u064a\u0647 \u0627\u0644\u0623\u062f\u0645\u0646 \u0639\u0646\u062f \u0625\u0639\u0627\u062f\u0629 \u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0631\u0642\u0645 \u0639\u0645\u0644\u064a\u0629 \u0633\u0627\u0628\u0642."""
+    """يبحث عن كل الطلبات التي استُخدم فيها نفس رقم العملية (نص فقط، ليس صورة).
+    يُستخدم لتنبيه الأدمن عند إعادة استخدام رقم عملية سابق."""
     proof = str(proof or "").strip()
     if not proof:
         return []
@@ -342,9 +349,9 @@ def find_orders_by_proof(proof: str) -> list[dict]:
 
 
 def count_accepted_orders(user_id) -> int:
-    """\u064a\u062d\u0633\u0628 \u0639\u062f\u062f \u0637\u0644\u0628\u0627\u062a \u0627\u0644\u0632\u0628\u0648\u0646 \u0627\u0644\u062a\u064a \u0648\u0635\u0644\u062a \u0644\u062d\u0627\u0644\u0629 \u0645\u0642\u0628\u0648\u0644 \u0623\u0648 \u0645\u0646\u0641\u064e\u0651\u0630.
-    \u062a\u064f\u0633\u062a\u062e\u062f\u0645 \u0644\u0645\u0639\u0631\u0641\u0629 \u0625\u0646 \u0643\u0627\u0646\u062a \u0639\u0645\u0644\u064a\u0629 \u0627\u0644\u0642\u0628\u0648\u0644 \u0627\u0644\u062d\u0627\u0644\u064a\u0629 \u0647\u064a \u0623\u0648\u0644 \u0639\u0645\u0644\u064a\u0629 \u0634\u0631\u0627\u0621 \u0645\u062f\u0641\u0648\u0639\u0629 \u0644\u0647 (\u0646\u0638\u0627\u0645 \u0627\u0644\u0625\u062d\u0627\u0644\u0629)."""
-    paid_statuses = {"\u0645\u0642\u0628\u0648\u0644 \u2705", "\u0645\u0646\u0641\u064e\u0651\u0630 \U0001f4e6"}
+    """يحسب عدد طلبات الزبون التي وصلت لحالة مقبول أو منفّذ.
+    تُستخدم لمعرفة إن كانت عملية القبول الحالية هي أول عملية شراء مدفوعة له (نظام الإحالة)."""
+    paid_statuses = {"مقبول ✅", "منفَّذ 📦"}
     count = 0
     for r in _records("Orders"):
         if str(r.get("user_id")) == str(user_id) and str(r.get("status")) in paid_statuses:
@@ -352,10 +359,10 @@ def count_accepted_orders(user_id) -> int:
     return count
 
 
-# ---------------- \u0631\u0642\u0645 \u0627\u0644\u0632\u0628\u0648\u0646 \u0627\u0644\u062a\u0633\u0644\u0633\u0644\u064a (\u0644\u0623\u0648\u0644 \u0645\u062d\u0627\u062f\u062b\u0629 \u0641\u0642\u0637) ----------------
+# ---------------- رقم الزبون التسلسلي (لأول محادثة فقط) ----------------
 def get_customer_number(user_id: int, referred_by: str = "") -> tuple[int, bool]:
-    """\u064a\u0631\u062c\u0639 (\u0627\u0644\u0631\u0642\u0645, \u0647\u0644 \u0647\u0648 \u0632\u0628\u0648\u0646 \u062c\u062f\u064a\u062f). \u0623\u0648\u0644 \u0632\u0628\u0648\u0646 \u064a\u0627\u062e\u062f \u0631\u0642\u0645 \u0627\u0644\u0628\u062f\u0627\u064a\u0629 \u0645\u0646 Settings (\u0627\u0641\u062a\u0631\u0627\u0636\u064a\u064b\u0627 1310).
-    referred_by: \u0645\u0639\u0631\u0641 \u0627\u0644\u0632\u0628\u0648\u0646 \u0627\u0644\u0630\u064a \u0623\u062d\u0627\u0644 \u0647\u0630\u0627 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645 \u2014 \u064a\u064f\u062d\u0641\u0638 \u0641\u0642\u0637 \u0639\u0646\u062f \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u0632\u0628\u0648\u0646 \u0644\u0623\u0648\u0644 \u0645\u0631\u0629."""
+    """يرجع (الرقم, هل هو زبون جديد). أول زبون يأخذ رقم البداية من Settings (افتراضيًا 1310).
+    referred_by: معرف الزبون الذي أحال هذا المستخدم — يُحفظ فقط عند إنشاء الزبون لأول مرة."""
     records = _records("Customers")
     for r in records:
         if str(r.get("user_id")) == str(user_id):
@@ -389,7 +396,7 @@ def get_customer_number(user_id: int, referred_by: str = "") -> tuple[int, bool]
 
 
 def get_customer(user_id) -> dict | None:
-    """\u064a\u0631\u062c\u0639 \u0633\u062c\u0644 \u0627\u0644\u0632\u0628\u0648\u0646 \u0643\u0627\u0645\u0644\u064b\u0627 (\u064a\u0634\u0645\u0644 referred_by \u0648ref_rewarded) \u0623\u0648 None \u0625\u0646 \u0644\u0645 \u064a\u0648\u062c\u062f."""
+    """يرجع سجل الزبون كاملًا (يشمل referred_by وref_rewarded) أو None إن لم يوجد."""
     for r in _records("Customers"):
         if str(r.get("user_id")) == str(user_id):
             return r
@@ -397,8 +404,8 @@ def get_customer(user_id) -> dict | None:
 
 
 def mark_referral_rewarded(user_id) -> None:
-    """\u062a\u064f\u0633\u062a\u062f\u0639\u0649 \u0628\u0639\u062f \u0625\u0634\u0639\u0627\u0631 \u0627\u0644\u0623\u062f\u0645\u0646/\u0627\u0644\u062f\u0627\u0639\u064a \u0628\u0623\u0646 \u0647\u0630\u0627 \u0627\u0644\u0632\u0628\u0648\u0646 \u0627\u0644\u0645\u064f\u062d\u0627\u0644 \u0623\u062a\u0645 \u0623\u0648\u0644 \u0639\u0645\u0644\u064a\u0629 \u0634\u0631\u0627\u0621 \u0645\u062f\u0641\u0648\u0639\u0629\u060c
-    \u0644\u0645\u0646\u0639 \u062a\u0643\u0631\u0627\u0631 \u0627\u0644\u0625\u0634\u0639\u0627\u0631 \u0639\u0646\u062f \u0623\u064a \u0637\u0644\u0628\u0627\u062a \u0644\u0627\u062d\u0642\u0629 \u0644\u0647."""
+    """تُستدعى بعد إشعار الأدمن/الداعي بأن هذا الزبون المُحال أتم أول عملية شراء مدفوعة،
+    لمنع تكرار الإشعار عند أي طلبات لاحقة له."""
     cell = _retry_on_quota(_ws["Customers"].find, str(user_id), in_column=1)
     if not cell:
         return
@@ -411,15 +418,15 @@ def mark_referral_rewarded(user_id) -> None:
     _cache.pop("Customers", None)
 
 
-# ---------------- \u0627\u0644\u0628\u062b \u0627\u0644\u062c\u0645\u0627\u0639\u064a ----------------
+# ---------------- البث الجماعي ----------------
 def get_broadcast_customers() -> list[str]:
-    """\u0643\u0644 \u0627\u0644\u0632\u0628\u0627\u0626\u0646 \u0627\u0644\u0630\u064a\u0646 \u0644\u0645 \u064a\u062d\u0638\u0631\u0648\u0627 \u0627\u0644\u0628\u0648\u062a \u2014 \u062a\u064f\u0633\u062a\u062e\u062f\u0645 \u0641\u064a \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0628\u062b \u0627\u0644\u062c\u0645\u0627\u0639\u064a."""
+    """كل الزبائن الذين لم يحظروا البوت — تُستخدم في إرسال البث الجماعي."""
     records = _records("Customers")
     return [str(r.get("user_id")) for r in records if str(r.get("user_id")) and not _truthy(r.get("blocked"))]
 
 
 def mark_customer_blocked(user_id) -> None:
-    """\u062a\u064f\u0633\u062a\u062f\u0639\u0649 \u0639\u0646\u062f \u0641\u0634\u0644 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0628\u062b \u0644\u0632\u0628\u0648\u0646 \u0628\u0633\u0628\u0628 \u062d\u0638\u0631 \u0627\u0644\u0628\u0648\u062a\u060c \u0641\u0644\u0627 \u0646\u062d\u0627\u0648\u0644 \u0645\u0631\u0627\u0633\u0644\u062a\u0647 \u0645\u062c\u062f\u062f\u064b\u0627."""
+    """تُستدعى عند فشل إرسال البث لزبون بسبب حظر البوت، فلا نحاول مراسلته مجددًا."""
     cell = _retry_on_quota(_ws["Customers"].find, str(user_id), in_column=1)
     if not cell:
         return
