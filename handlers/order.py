@@ -25,7 +25,8 @@ async def cb_choose_payment(callback: CallbackQuery, state: FSMContext):
         f"💰 قم بتحويل المبلغ عبر {pm.get('name_ar')} إلى الرقم التالي:\n\n"
         f"`{pm.get('wallet_number')}`\n"
         "(اضغط على الرقم لنسخه)\n\n"
-        "بعد التحويل، أرسل رقم عملية التحويل أو صورة عن إثبات الدفع 👇"
+        "بعد التحويل، أرسل رقم عملية التحويل أو صورة عن إثبات الدفع 👇\n"
+        "⚠️ الرجاء إرسال رقم العملية فقط أو صورة الإثبات، دون أي رسالة إضافية."
     )
     await show_screen(bot=callback.bot, chat_id=callback.message.chat.id, state=state, text=text)
     await callback.answer()
@@ -147,6 +148,13 @@ async def notify_admin(bot, order_id, data, extra_info, user_chat_id):
         f"المعلومات الإضافية: {extra_info or '-'}\n"
         f"العميل: {user_chat_id}"
     )
+
+    # تنبيه إن كان رقم العملية (وليس صورة) مستخدمًا في طلب سابق — احتمال احتيال أو خطأ
+    if not data.get("proof_is_photo") and proof:
+        dup_orders = [o for o in db.find_orders_by_proof(proof) if str(o.get("order_id")) != str(order_id)]
+        if dup_orders:
+            dup_ids = "، ".join(f"#{o.get('order_id')}" for o in dup_orders)
+            caption += f"\n\n⚠️ تنبيه: رقم العملية هذا استُخدم سابقًا في الطلب/الطلبات: {dup_ids}"
 
     markup = kb.kb_admin_decision(order_id)
     if data.get("proof_is_photo"):
