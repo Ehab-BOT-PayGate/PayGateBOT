@@ -1,3 +1,4 @@
+# admin.py
 import logging
 
 from aiogram import Router, F
@@ -34,6 +35,46 @@ async def _edit_admin_message(message, new_text: str, reply_markup=None):
         pass
 
 
+async def _notify_referral_reward(bot, buyer_id, order_id: str):
+    """تُستدعى عند أول عملية شراء مقبولة لزبون تمت إحالته:
+    تُبلّغ الأدمن ليجهّز كوبون الخصم يدويًا، وتُبلّغ الزبون الداعي أن مكافأته قادمة."""
+    buyer = db.get_customer(buyer_id)
+    if not buyer:
+        return
+    referrer_id = str(buyer.get("referred_by") or "").strip()
+    if not referrer_id or str(buyer.get("ref_rewarded")).strip().upper() == "TRUE":
+        return
+
+    db.mark_referral_rewarded(buyer_id)
+
+    settings = db.get_settings()
+    admin_id = settings.get("ADMIN_ID", "").strip()
+    if admin_id:
+        try:
+            await bot.send_message(
+                chat_id=admin_id,
+                text=(
+                    "🎁 مكافأة إحالة مستحقة!\n\n"
+                    f"الزبون الداعي (user_id): {referrer_id}\n"
+                    f"صديقه أتم أول عملية شراء مدفوعة (طلب #{order_id}).\n"
+                    "الرجاء تجهيز كوبون خصم (10-20%) وإرساله للزبون الداعي يدويًا."
+                ),
+            )
+        except Exception:
+            logger.exception("فشل إرسال إشعار الإحالة للأدمن (referrer_id=%s)", referrer_id)
+
+    try:
+        await bot.send_message(
+            chat_id=int(referrer_id),
+            text=(
+                "🎉 مبروك! صديقك الذي دعوته للبوت أتم أول عملية شراء مدفوعة.\n"
+                "كوبون خصمك (بين 10% و20%) قيد التجهيز وسيصلك قريبًا 🎁"
+            ),
+        )
+    except Exception:
+        logger.exception("فشل إرسال إشعار المكافأة للزبون الداعي user_id=%s", referrer_id)
+
+
 @router.callback_query(F.data.startswith("admin:accept:"))
 async def cb_admin_accept(callback: CallbackQuery):
     if not _is_admin(callback.from_user.id):
@@ -50,17 +91,21 @@ async def cb_admin_accept(callback: CallbackQuery):
         await callback.answer("تم معالجة هذا الطلب مسبقًا ✋", show_alert=True)
         return
 
+    buyer_id = order.get("user_id")
+    # نتحقق قبل تحديث الحالة: إن كان صفر يعني هذه أول عملية شراء مقبولة له
+    is_first_paid_order = db.count_accepted_orders(buyer_id) == 0
+
     db.update_order_status(order_id, ACCEPTED)
 
     base_text = callback.message.caption if callback.message.caption is not None else callback.message.text
 
     try:
         await callback.bot.send_message(
-            chat_id=int(order.get("user_id")),
+            chat_id=int(buyer_id),
             text=f"✅ تم قبول طلبك رقم #{order_id} وسيتم تنفيذه الآن. شكرًا لثقتك بنا!",
         )
     except Exception:
-        logger.exception("فشل إرسال إشعار القبول للزبون user_id=%s order_id=%s", order.get("user_id"), order_id)
+        logger.exception("فشل إرسال إشعار القبول للزبون user_id=%s order_id=%s", buyer_id, order_id)
         await callback.message.answer(
             f"⚠️ تم قبول الطلب #{order_id} في الشيت، لكن تعذّر إرسال إشعار للزبون "
             "(قد يكون حظر البوت أو لم يبدأه من قبل)."
@@ -72,6 +117,9 @@ async def cb_admin_accept(callback: CallbackQuery):
         reply_markup=kb.kb_admin_fulfill(order_id),
     )
     await callback.answer("تم القبول ✅")
+
+    if is_first_paid_order:
+        await _notify_referral_reward(callback.bot, buyer_id, order_id)
 
 
 @router.callback_query(F.data.startswith("admin:fulfill:"))
