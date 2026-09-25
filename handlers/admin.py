@@ -1,7 +1,7 @@
-# admin.py
 import logging
 
 from aiogram import Router, F
+from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
@@ -24,6 +24,43 @@ def _is_admin(user_id: int) -> bool:
     return str(user_id) == admin_id
 
 
+@router.message(F.photo, F.caption.regexp(r"(?is)^/setwelcome\b"))
+async def cmd_set_welcome_image(message: Message):
+    """يحفظ صورة ونص الترحيب معًا: يرسلهما الأدمن كصورة، وفي خانة الوصف يكتب
+    /setwelcome ثم نص الترحيب الجديد في السطر التالي (اختياري — إن تُرك فارغًا يبقى النص الحالي)."""
+    if not _is_admin(message.from_user.id):
+        return
+
+    file_id = message.photo[-1].file_id
+    db.set_setting("WELCOME_IMAGE", file_id)
+
+    caption = message.caption or ""
+    # نزيل كلمة الأمر من أول السطر ونأخذ الباقي كنص الترحيب الجديد
+    new_text = caption.split("\n", 1)[1].strip() if "\n" in caption else ""
+
+    if new_text:
+        db.set_setting("WELCOME_TEXT", new_text)
+        await message.answer("✅ تم حفظ صورة ونص الترحيب الجديدين بنجاح. جرّب /start الآن لرؤيتهما.")
+    else:
+        await message.answer("✅ تم حفظ صورة الترحيب بنجاح (بقي النص كما هو). جرّب /start الآن لرؤيتها.")
+
+
+@router.message(Command("setwelcome"))
+async def cmd_set_welcome_text_only(message: Message, command: CommandObject):
+    """تغيير نص الترحيب فقط (بدون صورة): /setwelcome ثم النص الجديد."""
+    if not _is_admin(message.from_user.id):
+        return
+    new_text = (command.args or "").strip()
+    if not new_text:
+        await message.answer(
+            "✍️ أرسل النص بعد الأمر، مثال:\n/setwelcome أهلًا بك في متجرنا الجديد!\n\n"
+            "ولتغيير الصورة أيضًا، أرسلها كصورة واكتب /setwelcome ثم النص الجديد في خانة الوصف."
+        )
+        return
+    db.set_setting("WELCOME_TEXT", new_text)
+    await message.answer("✅ تم تحديث نص الترحيب. جرّب /start الآن.")
+
+
 async def _edit_admin_message(message, new_text: str, reply_markup=None):
     """تعدّل رسالة القرار عند الأدمن (نص أو صورة) بأمان."""
     try:
@@ -33,46 +70,6 @@ async def _edit_admin_message(message, new_text: str, reply_markup=None):
             await message.edit_text(new_text, reply_markup=reply_markup)
     except TelegramBadRequest:
         pass
-
-
-async def _notify_referral_reward(bot, buyer_id, order_id: str):
-    """تُستدعى عند أول عملية شراء مقبولة لزبون تمت إحالته:
-    تُبلّغ الأدمن ليجهّز كوبون الخصم يدويًا، وتُبلّغ الزبون الداعي أن مكافأته قادمة."""
-    buyer = db.get_customer(buyer_id)
-    if not buyer:
-        return
-    referrer_id = str(buyer.get("referred_by") or "").strip()
-    if not referrer_id or str(buyer.get("ref_rewarded")).strip().upper() == "TRUE":
-        return
-
-    db.mark_referral_rewarded(buyer_id)
-
-    settings = db.get_settings()
-    admin_id = settings.get("ADMIN_ID", "").strip()
-    if admin_id:
-        try:
-            await bot.send_message(
-                chat_id=admin_id,
-                text=(
-                    "🎁 مكافأة إحالة مستحقة!\n\n"
-                    f"الزبون الداعي (user_id): {referrer_id}\n"
-                    f"صديقه أتم أول عملية شراء مدفوعة (طلب #{order_id}).\n"
-                    "الرجاء تجهيز كوبون خصم (10-20%) وإرساله للزبون الداعي يدويًا."
-                ),
-            )
-        except Exception:
-            logger.exception("فشل إرسال إشعار الإحالة للأدمن (referrer_id=%s)", referrer_id)
-
-    try:
-        await bot.send_message(
-            chat_id=int(referrer_id),
-            text=(
-                "🎉 مبروك! صديقك الذي دعوته للبوت أتم أول عملية شراء مدفوعة.\n"
-                "كوبون خصمك (بين 10% و20%) قيد التجهيز وسيصلك قريبًا 🎁"
-            ),
-        )
-    except Exception:
-        logger.exception("فشل إرسال إشعار المكافأة للزبون الداعي user_id=%s", referrer_id)
 
 
 @router.callback_query(F.data.startswith("admin:accept:"))
@@ -91,21 +88,17 @@ async def cb_admin_accept(callback: CallbackQuery):
         await callback.answer("تم معالجة هذا الطلب مسبقًا ✋", show_alert=True)
         return
 
-    buyer_id = order.get("user_id")
-    # نتحقق قبل تحديث الحالة: إن كان صفر يعني هذه أول عملية شراء مقبولة له
-    is_first_paid_order = db.count_accepted_orders(buyer_id) == 0
-
     db.update_order_status(order_id, ACCEPTED)
 
     base_text = callback.message.caption if callback.message.caption is not None else callback.message.text
 
     try:
         await callback.bot.send_message(
-            chat_id=int(buyer_id),
+            chat_id=int(order.get("user_id")),
             text=f"✅ تم قبول طلبك رقم #{order_id} وسيتم تنفيذه الآن. شكرًا لثقتك بنا!",
         )
     except Exception:
-        logger.exception("فشل إرسال إشعار القبول للزبون user_id=%s order_id=%s", buyer_id, order_id)
+        logger.exception("فشل إرسال إشعار القبول للزبون user_id=%s order_id=%s", order.get("user_id"), order_id)
         await callback.message.answer(
             f"⚠️ تم قبول الطلب #{order_id} في الشيت، لكن تعذّر إرسال إشعار للزبون "
             "(قد يكون حظر البوت أو لم يبدأه من قبل)."
@@ -117,9 +110,6 @@ async def cb_admin_accept(callback: CallbackQuery):
         reply_markup=kb.kb_admin_fulfill(order_id),
     )
     await callback.answer("تم القبول ✅")
-
-    if is_first_paid_order:
-        await _notify_referral_reward(callback.bot, buyer_id, order_id)
 
 
 @router.callback_query(F.data.startswith("admin:fulfill:"))
