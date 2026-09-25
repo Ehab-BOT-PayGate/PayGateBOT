@@ -37,6 +37,96 @@ _ws = {
 # كاش قصير الأمد للقراءات المتكررة (لا يشمل الطلبات لأنها تحتاج دقة فورية)
 _cache = TTLCache(maxsize=32, ttl=15)
 
+# ---------------- إصلاح صف العناوين تلقائيًا ----------------
+# بعض الشيتات قد تُنشأ دون صف عناوين (الصف الأول = بيانات فعلية)، ما يمنع
+# get_all_records من العمل بشكل صحيح. هذه الدالة تتأكد من وجود صف العناوين
+# الصحيح فوق البيانات، وتضيفه تلقائيًا عند الحاجة دون حذف أي بيانات موجودة.
+ORDERS_HEADERS = [
+    "order_id", "timestamp", "user_id", "username", "full_name",
+    "service_name", "option_label", "base_price", "discount_code",
+    "final_price", "payment_method", "proof", "extra_info", "status",
+]
+CUSTOMERS_HEADERS = ["user_id", "customer_number", "timestamp", "blocked"]
+
+
+def _ensure_header(ws, expected: list[str]) -> bool:
+    try:
+        first_row = ws.row_values(1)
+    except Exception:
+        first_row = []
+    normalized = [str(c).strip() for c in first_row]
+    if normalized[: len(expected)] == expected:
+        return False
+    # إن كان صف العناوين موجودًا وصحيحًا لكن ناقص أعمدة جديدة في نهايته
+    # (مثل ترقية سابقة أضافت عمود "blocked")، أكمل الأعمدة الناقصة فقط
+    # دون إدراج صف جديد فوق البيانات.
+    if normalized and expected[: len(normalized)] == normalized:
+        for i in range(len(normalized), len(expected)):
+            ws.update_cell(1, i + 1, expected[i])
+        return True
+    ws.insert_row(expected, index=1, value_input_option="RAW")
+    return True
+
+
+def ensure_all_headers() -> None:
+    """تُستدعى مرة عند إقلاع البوت. تُصلح صفوف العناوين الناقصة في Orders وCustomers."""
+    changed_orders = _ensure_header(_ws["Orders"], ORDERS_HEADERS)
+    changed_customers = _ensure_header(_ws["Customers"], CUSTOMERS_HEADERS)
+    if changed_orders or changed_customers:
+        clear_cache()
+
+
+def cleanup_customers() -> None:
+    """تُستدعى مرة عند إقلاع البوت. تحذف تكرار الزبائن (نفس user_id عدة مرات)
+    وتُعيد ترقيمهم تسلسليًا حسب أول ظهور. آمنة للتشغيل في كل مرة: لا تُغيّر
+    شيئًا إن كانت البيانات مرتبة أصلًا."""
+    ws = _ws["Customers"]
+    data = ws.get_all_values()
+    if len(data) <= 1:
+        return
+
+    rows = data[1:]
+    seen: dict[str, list] = {}
+    order_first_seen: list[str] = []
+    for r in rows:
+        uid = str(r[0]).strip() if len(r) > 0 else ""
+        if not uid or uid in seen:
+            continue
+        seen[uid] = r
+        order_first_seen.append(uid)
+
+    settings = get_settings()
+    try:
+        start_num = int(settings.get("START_CUSTOMER_NUMBER", "1310") or 1310)
+    except ValueError:
+        start_num = 1310
+
+    new_rows = []
+    for i, uid in enumerate(order_first_seen):
+        r = seen[uid]
+        ts = r[2] if len(r) > 2 else ""
+        blocked = r[3] if len(r) > 3 else "FALSE"
+        new_rows.append([uid, str(start_num + i), ts, blocked])
+
+    changed = len(new_rows) != len(rows)
+    if not changed:
+        for a, b in zip(rows, new_rows):
+            a_uid = str(a[0]).strip() if len(a) > 0 else ""
+            a_num = str(a[1]).strip() if len(a) > 1 else ""
+            a_ts = a[2] if len(a) > 2 else ""
+            a_blocked = a[3] if len(a) > 3 else "FALSE"
+            if a_uid != b[0] or a_num != b[1] or a_ts != b[2] or a_blocked != b[3]:
+                changed = True
+                break
+    if not changed:
+        return
+
+    last_row = len(rows) + 1
+    ws.batch_clear([f"A2:D{last_row}"])
+    if new_rows:
+        ws.update(f"A2:D{len(new_rows) + 1}", new_rows, value_input_option="USER_ENTERED")
+    _cache.pop("Customers", None)
+
 
 def _records(sheet_name: str):
     cached = _cache.get(sheet_name)
@@ -150,9 +240,20 @@ def increment_discount_usage(code: str):
 
 
 # ---------------- الطلبات ----------------
+# استبعاد الحروف المتشابهة مع الأرقام (O يشبه 0، I يشبه 1) لتقليل الأخطاء
+# عند كتابة رقم الطلب يدويًا للدعم.
+_ORDER_ID_LETTERS = [c for c in string.ascii_uppercase if c not in ("O", "I")]
+
+
 def _new_order_id() -> str:
-    suffix = "".join(random.choices(string.digits, k=3))
-    return f"{datetime.now().strftime('%y%m%d%H%M%S')}{suffix}"
+    """رقم طلب قصير وعشوائي وفريد: حرف + 6 أرقام، مثل K482915."""
+    existing = set(_ws["Orders"].col_values(1)[1:])  # تجاوز صف العناوين
+    for _ in range(50):
+        candidate = random.choice(_ORDER_ID_LETTERS) + "".join(random.choices(string.digits, k=6))
+        if candidate not in existing:
+            return candidate
+    # احتياطي شبه مستحيل الحدوث: أضف بصمة زمنية لضمان عدم التكرار
+    return random.choice(_ORDER_ID_LETTERS) + "".join(random.choices(string.digits, k=6)) + datetime.now().strftime("%S")
 
 
 def create_order(**fields) -> str:
@@ -173,7 +274,7 @@ def create_order(**fields) -> str:
         fields.get("extra_info", ""),
         "قيد المراجعة",
     ]
-    _ws["Orders"].append_row(row, value_input_option="RAW")
+    _ws["Orders"].append_row(row, value_input_option="USER_ENTERED")
     return order_id
 
 
@@ -200,6 +301,15 @@ def get_orders_by_user(user_id: int, limit: int = 10) -> list[dict]:
     rows = [r for r in _ws["Orders"].get_all_records() if str(r.get("user_id")) == str(user_id)]
     rows.reverse()
     return rows[:limit]
+
+
+def find_orders_by_proof(proof: str) -> list[dict]:
+    """يبحث عن كل الطلبات التي استُخدم فيها نفس رقم العملية (نص فقط، ليس صور).
+    يُستخدم لتنبيه الأدمن عند إعادة استخدام رقم عملية سابق."""
+    proof = str(proof or "").strip()
+    if not proof:
+        return []
+    return [r for r in _ws["Orders"].get_all_records() if str(r.get("proof", "")).strip() == proof]
 
 
 # ---------------- رقم الزبون التسلسلي (لأول محادثة فقط) ----------------
@@ -229,19 +339,29 @@ def get_customer_number(user_id: int) -> tuple[int, bool]:
     next_num = max(existing_numbers) + 1 if existing_numbers else start_num
 
     _ws["Customers"].append_row(
-        [str(user_id), next_num, datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-        value_input_option="RAW",
+        [str(user_id), next_num, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "FALSE"],
+        value_input_option="USER_ENTERED",
     )
     return next_num, True
 
 
-def get_all_customer_ids() -> list[int]:
-    """يرجع كل معرفات المستخدمين المسجلين (لاستخدامها بالرسائل الجماعية)."""
-    ids = []
-    for r in _ws["Customers"].get_all_records():
-        uid = r.get("user_id")
-        try:
-            ids.append(int(uid))
-        except (TypeError, ValueError):
-            continue
-    return ids
+# ---------------- البث الجماعي ----------------
+def get_broadcast_customers() -> list[str]:
+    """كل الزبائن الذين لم يحظروا البوت — تُستخدم في إرسال البث الجماعي."""
+    records = _ws["Customers"].get_all_records()
+    return [str(r.get("user_id")) for r in records if str(r.get("user_id")) and not _truthy(r.get("blocked"))]
+
+
+def mark_customer_blocked(user_id) -> None:
+    """تُستدعى عند فشل إرسال البث لزبون بسبب حظر البوت، فلا نحاول مراسلته مجددًا."""
+    cell = _ws["Customers"].find(str(user_id), in_column=1)
+    if not cell:
+        return
+    headers = _ws["Customers"].row_values(1)
+    try:
+        col = headers.index("blocked") + 1
+    except ValueError:
+        return
+    _ws["Customers"].update_cell(cell.row, col, "TRUE")
+    _cache.pop("Customers", None)
+
