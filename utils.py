@@ -12,9 +12,14 @@ import sheets_service as db
 
 
 def _with_support_button(reply_markup: InlineKeyboardMarkup | None) -> InlineKeyboardMarkup:
-    """يضيف زر 'تواصل مع الدعم' بشكل دائم أسفل أي شاشة يعرضها البوت."""
+    """يضيف زر 'تواصل مع الدعم' بشكل دائم أسفل أي شاشة يعرضها البوت.
+    إذا كان رابط الدعم بالإعدادات رابط تلغرام صالح (فيه يوزر)، الزر يفتح المحادثة مباشرة."""
     rows = list(reply_markup.inline_keyboard) if reply_markup else []
-    rows.append([InlineKeyboardButton(text="🆘 تواصل مع الدعم", callback_data="support")])
+    link = db.get_settings().get("SUPPORT_LINK", "").strip()
+    if link.startswith("http"):
+        rows.append([InlineKeyboardButton(text="🆘 تواصل مع الدعم", url=link)])
+    else:
+        rows.append([InlineKeyboardButton(text="🆘 تواصل مع الدعم", callback_data="support")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
