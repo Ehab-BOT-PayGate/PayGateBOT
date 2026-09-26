@@ -46,9 +46,6 @@ def _retry_on_quota(func, *args, max_retries=5, base_delay=4, **kwargs):
 
 
 # ---------------- الاتصال الأولي (مع إعادة محاولة عند تجاوز الحصة) ----------------
-# ملاحظة: بدل ما نطلب كل شيت على حدة (7 طلبات منفصلة)، نطلب كل الشيتات
-# دفعة واحدة عبر worksheets() — طلب واحد فقط بدل 7. هذا يقلل استهلاك الحصة
-# بشكل كبير عند كل إعادة تشغيل للبوت (مهم جدًا لو حصل Crash loop).
 _creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=SCOPES)
 _gc = gspread.authorize(_creds)
 _sheet = _retry_on_quota(_gc.open_by_key, GOOGLE_SHEET_ID)
@@ -61,20 +58,13 @@ _missing = [name for name in _SHEET_NAMES if name not in _ws]
 if _missing:
     logger.warning("الشيتات التالية غير موجودة في الملف: %s", _missing)
 
-# كاش قصير الأمد للقراءات المتكررة. مدة أطول = طلبات أقل لجوجل = مقاومة أكبر لتجاوز الحصة.
 _cache = TTLCache(maxsize=32, ttl=30)
 
-# ---------------- إصلاح صف العناوين تلقائيًا ----------------
-# بعض الشيتات قد تُنشأ دون صف عناوين (الصف الأول = بيانات فعلية)، ما يمنع
-# get_all_records من العمل بشكل صحيح. هذه الدالة تتأكد من وجود صف العناوين
-# الصحيح فوق البيانات، وتضيفه تلقائيًا عند الحاجة دون حذف أي بيانات موجودة.
 ORDERS_HEADERS = [
     "order_id", "timestamp", "user_id", "username", "full_name",
     "service_name", "option_label", "base_price", "discount_code",
     "final_price", "payment_method", "proof", "extra_info", "status",
 ]
-# referred_by: معرف الزبون الذي أحال هذا المستخدم (فارغ إن لم يُحَل من أحد)
-# ref_rewarded: TRUE بعد إشعار الأدمن/الداعي بأول عملية شراء مدفوعة (لمنع التكرار)
 CUSTOMERS_HEADERS = ["user_id", "customer_number", "timestamp", "blocked", "referred_by", "ref_rewarded"]
 
 
@@ -86,9 +76,6 @@ def _ensure_header(ws, expected: list[str]) -> bool:
     normalized = [str(c).strip() for c in first_row]
     if normalized[: len(expected)] == expected:
         return False
-    # إن كان صف العناوين موجودًا وصحيحًا لكن ناقص أعمدة جديدة في نهايته
-    # (مثل ترقية سابقة أضافت عمود "blocked")، أكمل الأعمدة الناقصة فقط
-    # دون إدراج صف جديد فوق البيانات.
     if normalized and expected[: len(normalized)] == normalized:
         for i in range(len(normalized), len(expected)):
             _retry_on_quota(ws.update_cell, 1, i + 1, expected[i])
@@ -98,7 +85,6 @@ def _ensure_header(ws, expected: list[str]) -> bool:
 
 
 def ensure_all_headers() -> None:
-    """تُستدعى مرة عند إقلاع البوت. تُصلح صفوف العناوين الناقصة في Orders وCustomers."""
     changed_orders = _ensure_header(_ws["Orders"], ORDERS_HEADERS)
     changed_customers = _ensure_header(_ws["Customers"], CUSTOMERS_HEADERS)
     if changed_orders or changed_customers:
@@ -106,11 +92,8 @@ def ensure_all_headers() -> None:
 
 
 def cleanup_customers() -> None:
-    """تُستدعى مرة عند إقلاع البوت. تحذف تكرار الزبائن (نفس user_id عدة مرات)
-    وتُعيد ترقيمهم تسلسليًا حسب أول ظهور. آمنة للتشغيل في كل مرة: لا تُغيّر
-    شيئًا إن كانت البيانات مرتبة أصلًا."""
     ws = _ws["Customers"]
-    data = _retry_on_quota(ws.get_all_values)
+    data = _retry_on_quota(ws.get_all_values, value_render_option="UNFORMATTED_VALUE")
     if len(data) <= 1:
         return
 
@@ -118,6 +101,7 @@ def cleanup_customers() -> None:
     seen: dict[str, list] = {}
     order_first_seen: list[str] = []
     for r in rows:
+        r = [_denumberize(v) for v in r]
         uid = str(r[0]).strip() if len(r) > 0 else ""
         if not uid or uid in seen:
             continue
@@ -162,11 +146,27 @@ def cleanup_customers() -> None:
     _cache.pop("Customers", None)
 
 
+def _denumberize(value):
+    """يحوّل أي رقم عشري يمثّل في الحقيقة عددًا صحيحًا (مثل 1679341347.0 الناتج
+    عن قراءة معرّف المستخدم بصيغته غير المنسَّقة) إلى int عادي. بدون هذا، كل
+    مقارنة نصية على user_id أو رقم عملية الدفع تفشل لأن '1679341347.0' لا
+    تساوي '1679341347'، ما كان سيكسر "طلباتي" والبث الجماعي وربط الزبائن."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _records(sheet_name: str):
     cached = _cache.get(sheet_name)
     if cached is not None:
         return cached
-    records = _retry_on_quota(_ws[sheet_name].get_all_records)
+    # UNFORMATTED_VALUE إلزامي: بدونها يرسل جوجل شيت القيمة كما تُعرض بصريًا
+    # في الخلية (مثلًا 9.5 تُقرَّب إلى 10 إن كان تنسيق الخلية بدون كسور)
+    # بدل الرقم الحقيقي المخزَّن، ما يسبب أسعارًا خاطئة تصل للبوت.
+    raw_records = _retry_on_quota(
+        _ws[sheet_name].get_all_records, value_render_option="UNFORMATTED_VALUE"
+    )
+    records = [{k: _denumberize(v) for k, v in r.items()} for r in raw_records]
     _cache[sheet_name] = records
     return records
 
@@ -208,7 +208,6 @@ def set_setting(key: str, value: str) -> None:
 
 # ---------------- الخدمات ----------------
 def get_menus() -> list[str]:
-    """يبني قائمة الأزرار الرئيسية تلقائيًا من عمود menu_name لكل خدمة فعّالة."""
     rows = [r for r in _records("Services") if _truthy(r.get("active"))]
     rows.sort(key=lambda r: (_to_num(r.get("sort_order")), str(r.get("menu_name"))))
     seen = []
@@ -295,19 +294,15 @@ def increment_discount_usage(code: str):
 
 
 # ---------------- الطلبات ----------------
-# استبعاد الحروف المتشابهة مع الأرقام (O يشبه 0، I يشبه 1) لتقليل الأخطاء
-# عند كتابة رقم الطلب يدويًا للدعم.
 _ORDER_ID_LETTERS = [c for c in string.ascii_uppercase if c not in ("O", "I")]
 
 
 def _new_order_id() -> str:
-    """رقم طلب قصير وعشوائي وفريد: حرف + 6 أرقام، مثل K482915."""
     existing = {str(r.get("order_id")) for r in _records("Orders")}
     for _ in range(50):
         candidate = random.choice(_ORDER_ID_LETTERS) + "".join(random.choices(string.digits, k=6))
         if candidate not in existing:
             return candidate
-    # احتياطي شبه مستحيل الحدوث: أضف بصمة زمنية لضمان عدم التكرار
     return random.choice(_ORDER_ID_LETTERS) + "".join(random.choices(string.digits, k=6)) + datetime.now().strftime("%S")
 
 
@@ -361,8 +356,6 @@ def get_orders_by_user(user_id: int, limit: int = 10) -> list[dict]:
 
 
 def find_orders_by_proof(proof: str) -> list[dict]:
-    """يبحث عن كل الطلبات التي استُخدم فيها نفس رقم العملية (نص فقط، ليس صورة).
-    يُستخدم لتنبيه الأدمن عند إعادة استخدام رقم عملية سابق."""
     proof = str(proof or "").strip()
     if not proof:
         return []
@@ -370,8 +363,6 @@ def find_orders_by_proof(proof: str) -> list[dict]:
 
 
 def count_accepted_orders(user_id) -> int:
-    """يحسب عدد طلبات الزبون التي وصلت لحالة مقبول أو منفّذ.
-    تُستخدم لمعرفة إن كانت عملية القبول الحالية هي أول عملية شراء مدفوعة له (نظام الإحالة)."""
     paid_statuses = {"مقبول ✅", "منفَّذ 📦"}
     count = 0
     for r in _records("Orders"):
@@ -382,8 +373,6 @@ def count_accepted_orders(user_id) -> int:
 
 # ---------------- رقم الزبون التسلسلي (لأول محادثة فقط) ----------------
 def get_customer_number(user_id: int, referred_by: str = "") -> tuple[int, bool]:
-    """يرجع (الرقم, هل هو زبون جديد). أول زبون يأخذ رقم البداية من Settings (افتراضيًا 1310).
-    referred_by: معرف الزبون الذي أحال هذا المستخدم — يُحفظ فقط عند إنشاء الزبون لأول مرة."""
     records = _records("Customers")
     for r in records:
         if str(r.get("user_id")) == str(user_id):
@@ -417,7 +406,6 @@ def get_customer_number(user_id: int, referred_by: str = "") -> tuple[int, bool]
 
 
 def get_customer(user_id) -> dict | None:
-    """يرجع سجل الزبون كاملًا (يشمل referred_by وref_rewarded) أو None إن لم يوجد."""
     for r in _records("Customers"):
         if str(r.get("user_id")) == str(user_id):
             return r
@@ -425,8 +413,6 @@ def get_customer(user_id) -> dict | None:
 
 
 def mark_referral_rewarded(user_id) -> None:
-    """تُستدعى بعد إشعار الأدمن/الداعي بأن هذا الزبون المُحال أتم أول عملية شراء مدفوعة،
-    لمنع تكرار الإشعار عند أي طلبات لاحقة له."""
     cell = _retry_on_quota(_ws["Customers"].find, str(user_id), in_column=1)
     if not cell:
         return
@@ -441,13 +427,11 @@ def mark_referral_rewarded(user_id) -> None:
 
 # ---------------- البث الجماعي ----------------
 def get_broadcast_customers() -> list[str]:
-    """كل الزبائن الذين لم يحظروا البوت — تُستخدم في إرسال البث الجماعي."""
     records = _records("Customers")
     return [str(r.get("user_id")) for r in records if str(r.get("user_id")) and not _truthy(r.get("blocked"))]
 
 
 def mark_customer_blocked(user_id) -> None:
-    """تُستدعى عند فشل إرسال البث لزبون بسبب حظر البوت، فلا نحاول مراسلته مجددًا."""
     cell = _retry_on_quota(_ws["Customers"].find, str(user_id), in_column=1)
     if not cell:
         return
