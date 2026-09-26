@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 import sheets_service as db
 import keyboards as kb
 from states import OrderFlow
-from utils import show_screen
+from utils import show_screen, format_price
 
 router = Router()
 
@@ -141,9 +141,9 @@ async def notify_admin(bot, order_id, data, extra_info, user_chat_id):
         f"🆕 طلب جديد #{order_id}\n\n"
         f"الخدمة: {data.get('service_name')}\n"
         f"الخيار: {data.get('option_label')}\n"
-        f"السعر الأساسي: {data.get('base_price')}\n"
+        f"السعر الأساسي: {format_price(data.get('base_price'))}$\n"
         f"كود الخصم: {data.get('discount_code') or '-'}\n"
-        f"السعر النهائي: {data.get('final_price')}\n"
+        f"السعر النهائي: {format_price(data.get('final_price'))}$\n"
         f"طريقة الدفع: {data.get('payment_method')}\n"
         f"المعلومات الإضافية: {extra_info or '-'}\n"
         f"العميل: {user_chat_id}"
