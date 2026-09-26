@@ -1,6 +1,7 @@
-# keyboards.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from utils import format_price
 
 PAGE_SIZE = 6  # 6 عناصر لكل صفحة، عنصران في كل صف (3 صفوف)
 
@@ -40,7 +41,7 @@ def kb_subscribe(channel_link: str) -> InlineKeyboardMarkup:
 
 
 def kb_main_menu(menus: list[str], page: int = 0) -> InlineKeyboardMarkup:
-    items = [(m, f"menu:{m}") for m in menus] + [("📦 طلباتي", "myorders"), ("🎁 دعوة أصدقاء", "referral")]
+    items = [(m, f"menu:{m}") for m in menus] + [("📦 طلباتي", "myorders")]
     page_items, page, total_pages = _slice_page(items, page)
     buttons = [InlineKeyboardButton(text=t, callback_data=cd, style="success") for t, cd in page_items]
     rows = _grid_rows(buttons) + _nav_row("mainpage", page, total_pages)
@@ -57,7 +58,7 @@ def kb_services(services: list[dict], page: int = 0) -> InlineKeyboardMarkup:
 
 
 def kb_options(options: list[dict], service_id: str, page: int = 0) -> InlineKeyboardMarkup:
-    items = [(f"{o['label']} - {o['price']}", f"option:{o['id']}") for o in options]
+    items = [(f"{o['label']}  السعر {format_price(o['price'])}$", f"option:{o['id']}") for o in options]
     page_items, page, total_pages = _slice_page(items, page)
     buttons = [InlineKeyboardButton(text=t, callback_data=cd, style="success") for t, cd in page_items]
     rows = _grid_rows(buttons) + _nav_row("optpage", page, total_pages)
