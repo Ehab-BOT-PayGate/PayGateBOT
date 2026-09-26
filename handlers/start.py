@@ -91,7 +91,7 @@ async def handle_referral_and_welcome(bot, chat_id, user_id: int, referred_by: s
     await send_welcome(bot, chat_id, number, is_new)
 
 
-@router.message(CommandStart(deep_link=True))
+@router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject, state: FSMContext):
     await state.clear()
     referred_by = _extract_referrer(command.args, message.from_user.id)
