@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 import sheets_service as db
 import keyboards as kb
 from states import OrderFlow
-from utils import show_screen
+from utils import show_screen, format_price
 
 router = Router()
 
@@ -134,7 +134,7 @@ async def cb_choose_option(callback: CallbackQuery, state: FSMContext):
 
     text = (
         f"الخيار المختار: {option.get('label')}\n"
-        f"السعر: {option.get('price')}\n\n"
+        f"السعر: {format_price(option.get('price'))}$\n\n"
         "هل لديك كود خصم؟"
     )
     await show_screen(
@@ -192,7 +192,7 @@ async def msg_discount_code(message: Message, state: FSMContext):
 
     await show_payment_methods(
         message.bot, message.chat.id, state,
-        note=f"✅ تم تطبيق الخصم! السعر بعد الخصم: {final_price}",
+        note=f"✅ تم تطبيق الخصم! السعر بعد الخصم: {format_price(final_price)}$",
     )
 
 
