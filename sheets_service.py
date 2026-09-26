@@ -160,9 +160,6 @@ def _records(sheet_name: str):
     cached = _cache.get(sheet_name)
     if cached is not None:
         return cached
-    # UNFORMATTED_VALUE إلزامي: بدونها يرسل جوجل شيت القيمة كما تُعرض بصريًا
-    # في الخلية (مثلًا 9.5 تُقرَّب إلى 10 إن كان تنسيق الخلية بدون كسور)
-    # بدل الرقم الحقيقي المخزَّن، ما يسبب أسعارًا خاطئة تصل للبوت.
     raw_records = _retry_on_quota(
         _ws[sheet_name].get_all_records, value_render_option="UNFORMATTED_VALUE"
     )
@@ -186,8 +183,6 @@ def get_settings() -> dict:
 
 
 def set_setting(key: str, value: str) -> None:
-    """يحفظ/يحدّث قيمة إعداد واحد في شيت Settings (يضيف صفًا جديدًا إن لم يكن المفتاح موجودًا).
-    تُستخدم مثلًا لحفظ WELCOME_IMAGE عبر أمر /setwelcome."""
     ws = _ws["Settings"]
     headers = _retry_on_quota(ws.row_values, 1)
     try:
@@ -293,6 +288,16 @@ def increment_discount_usage(code: str):
     _cache.pop("DiscountCodes", None)
 
 
+def create_discount_code(code: str, percent: int, max_uses: int = 1) -> None:
+    """ينشئ كود خصم جديد تلقائيًا (تُستخدم لمكافأة الدعوة العشوائية 10-20٪)."""
+    _retry_on_quota(
+        _ws["DiscountCodes"].append_row,
+        [code, percent, max_uses, 0, "TRUE"],
+        value_input_option="RAW",
+    )
+    _cache.pop("DiscountCodes", None)
+
+
 # ---------------- الطلبات ----------------
 _ORDER_ID_LETTERS = [c for c in string.ascii_uppercase if c not in ("O", "I")]
 
@@ -367,6 +372,16 @@ def count_accepted_orders(user_id) -> int:
     count = 0
     for r in _records("Orders"):
         if str(r.get("user_id")) == str(user_id) and str(r.get("status")) in paid_statuses:
+            count += 1
+    return count
+
+
+def count_fulfilled_orders(user_id) -> int:
+    """عدد الطلبات المنفَّذة فعليًا (منفَّذ 📦 فقط) لهذا الزبون — يُستخدم لتحديد
+    أول عملية شراء كاملة، وهو الشرط لمنح مكافأة الدعوة للمُحيل."""
+    count = 0
+    for r in _records("Orders"):
+        if str(r.get("user_id")) == str(user_id) and str(r.get("status")) == "منفَّذ 📦":
             count += 1
     return count
 
