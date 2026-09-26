@@ -41,7 +41,7 @@ def kb_subscribe(channel_link: str) -> InlineKeyboardMarkup:
 
 
 def kb_main_menu(menus: list[str], page: int = 0) -> InlineKeyboardMarkup:
-    items = [(m, f"menu:{m}") for m in menus] + [("📦 طلباتي", "myorders")]
+    items = [(m, f"menu:{m}") for m in menus] + [("📦 طلباتي", "myorders"), ("🎁 دعوة أصدقاء", "referral")]
     page_items, page, total_pages = _slice_page(items, page)
     buttons = [InlineKeyboardButton(text=t, callback_data=cd, style="success") for t, cd in page_items]
     rows = _grid_rows(buttons) + _nav_row("mainpage", page, total_pages)
