@@ -1,7 +1,7 @@
 import logging
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, CommandObject
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
@@ -33,10 +33,9 @@ async def send_main_menu(bot, chat_id, state: FSMContext, page: int = 0):
     )
 
 
-async def build_welcome_text(user_id: int) -> str:
+async def build_welcome_text(number: int, is_new: bool) -> str:
     settings = db.get_settings()
     base_text = settings.get("WELCOME_TEXT", "").strip() or WELCOME_TEXT
-    number, is_new = db.get_customer_number(user_id)
     if is_new:
         return (
             base_text
@@ -45,10 +44,10 @@ async def build_welcome_text(user_id: int) -> str:
     return base_text
 
 
-async def send_welcome(bot, chat_id: int, user_id: int):
+async def send_welcome(bot, chat_id: int, number: int, is_new: bool):
     """رسالة الترحيب: ثابتة مع صورة (إن كانت محفوظة)، وتُرسل دائمًا كرسالة جديدة منفصلة.
     النص والصورة قابلان للتعديل عبر أمر /setwelcome من الأدمن."""
-    text = await build_welcome_text(user_id)
+    text = await build_welcome_text(number, is_new)
     settings = db.get_settings()
     image = settings.get("WELCOME_IMAGE", "").strip()
 
@@ -62,11 +61,43 @@ async def send_welcome(bot, chat_id: int, user_id: int):
     await bot.send_message(chat_id=chat_id, text=text)
 
 
-@router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+def _extract_referrer(payload: str, own_id: int) -> str:
+    """يستخرج معرف المُحيل من رابط الدعوة (?start=ref123456)."""
+    payload = (payload or "").strip()
+    if payload.startswith("ref"):
+        candidate = payload[3:]
+        if candidate.isdigit() and candidate != str(own_id):
+            return candidate
+    return ""
+
+
+async def handle_referral_and_welcome(bot, chat_id, user_id: int, referred_by: str):
+    number, is_new = db.get_customer_number(user_id, referred_by=referred_by)
+
+    if is_new and referred_by:
+        try:
+            await bot.send_message(
+                chat_id=int(referred_by),
+                text=(
+                    "🎉 لقد اشترك صديقك في البوت وحصلت على نقطة ولاء واحدة!\n"
+                    "سيتم منحك تلقائيًا بطاقة خصم بين 10-20٪ عشوائيًا، تعتمد على الحظ، "
+                    "عندما يتم صديقك أول عملية شراء كاملة.\n"
+                    "ادعُ المزيد من الأصدقاء لتربح بطاقات خصم أكثر! 🎁"
+                ),
+            )
+        except Exception:
+            logger.exception("فشل إرسال إشعار نقطة الولاء للمُحيل user_id=%s", referred_by)
+
+    await send_welcome(bot, chat_id, number, is_new)
+
+
+@router.message(CommandStart(deep_link=True))
+async def cmd_start(message: Message, command: CommandObject, state: FSMContext):
     await state.clear()
+    referred_by = _extract_referrer(command.args, message.from_user.id)
 
     if not await is_subscribed(message.bot, message.from_user.id):
+        await state.update_data(pending_referred_by=referred_by)
         settings = db.get_settings()
         link = settings.get("CHANNEL_LINK", "")
         await message.answer(
@@ -75,17 +106,18 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         return
 
-    # رسالة الترحيب ثابتة: تُرسل دائمًا كرسالة جديدة منفصلة ولا تدخل نظام تحديث الشاشات
-    await send_welcome(message.bot, message.chat.id, message.from_user.id)
+    await handle_referral_and_welcome(message.bot, message.chat.id, message.from_user.id, referred_by)
     await send_main_menu(message.bot, message.chat.id, state)
 
 
 @router.callback_query(F.data == "checksub")
 async def cb_checksub(callback: CallbackQuery, state: FSMContext):
     if await is_subscribed(callback.bot, callback.from_user.id):
+        data = await state.get_data()
+        referred_by = data.get("pending_referred_by", "")
         await callback.message.delete()
         await callback.answer("تم التحقق ✅")
-        await send_welcome(callback.bot, callback.message.chat.id, callback.from_user.id)
+        await handle_referral_and_welcome(callback.bot, callback.message.chat.id, callback.from_user.id, referred_by)
         await send_main_menu(callback.bot, callback.message.chat.id, state)
     else:
         await callback.answer("لم يتم العثور على اشتراكك بعد ❌", show_alert=True)
@@ -106,6 +138,19 @@ async def cb_support(callback: CallbackQuery):
     link = settings.get("SUPPORT_LINK", "")
     await callback.answer()
     await callback.message.answer(f"🆘 للتواصل مع الدعم:\n{link}")
+
+
+@router.callback_query(F.data == "referral")
+async def cb_referral(callback: CallbackQuery):
+    me = await callback.bot.get_me()
+    link = f"https://t.me/{me.username}?start=ref{callback.from_user.id}"
+    await callback.answer()
+    await callback.message.answer(
+        "🎁 ادعُ أصدقاءك إلى المتجر!\n\n"
+        "شارك هذا الرابط مع أصدقائك. عند أول اشتراك لصديقك بالبوت تحصل على نقطة ولاء، "
+        "وعند إتمامه أول عملية شراء كاملة تحصل تلقائيًا على بطاقة خصم عشوائية بين 10-20٪!\n\n"
+        f"{link}"
+    )
 
 
 @router.callback_query(F.data.startswith("mainpage:"))
