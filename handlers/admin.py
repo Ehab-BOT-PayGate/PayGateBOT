@@ -1,4 +1,6 @@
 import logging
+import random
+import string
 
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
@@ -143,8 +145,43 @@ async def cb_admin_fulfill(callback: CallbackQuery):
             f"⚠️ تم تنفيذ الطلب #{order_id} في الشيت، لكن تعذّر إرسال إشعار للزبون."
         )
 
+    await _reward_referrer_if_first_purchase(callback.bot, order.get("user_id"))
+
     await _edit_admin_message(callback.message, (base_text or "") + "\n\n📦 تم التنفيذ", reply_markup=None)
     await callback.answer("تم ✅")
+
+
+async def _reward_referrer_if_first_purchase(bot, user_id):
+    """إذا كانت هذه أول عملية شراء منفَّذة لهذا الزبون، وكان قد جاء عبر رابط دعوة
+    صديق ولم يُكافأ الداعي بعد، يُنشئ كود خصم عشوائي (10-20٪) ويرسله للداعي."""
+    if db.count_fulfilled_orders(user_id) != 1:
+        return  # ليست أول عملية شراء كاملة
+
+    customer = db.get_customer(user_id)
+    if not customer:
+        return
+
+    referred_by = str(customer.get("referred_by", "")).strip()
+    already_rewarded = str(customer.get("ref_rewarded", "")).strip().upper() == "TRUE"
+    if not referred_by or already_rewarded:
+        return
+
+    percent = random.randint(10, 20)
+    code = "REF" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    db.create_discount_code(code, percent, max_uses=1)
+    db.mark_referral_rewarded(user_id)
+
+    try:
+        await bot.send_message(
+            chat_id=int(referred_by),
+            text=(
+                f"🎁 مبروك! أتمّ صديقك أول عملية شراء له، وربحت بطاقة خصم {percent}٪!\n\n"
+                f"كود الخصم: `{code}`\n"
+                "استخدمه في طلبك القادم قبل إدخال الدفع 🛍️"
+            ),
+        )
+    except Exception:
+        logger.exception("فشل إرسال بطاقة الخصم للمُحيل user_id=%s", referred_by)
 
 
 @router.callback_query(F.data.startswith("admin:reject:"))
