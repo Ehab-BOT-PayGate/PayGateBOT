@@ -137,7 +137,7 @@ async def cb_support(callback: CallbackQuery):
     settings = db.get_settings()
     link = settings.get("SUPPORT_LINK", "")
     await callback.answer()
-    await callback.message.answer(f"🆘 للتواصل مع الدعم:\n{link}")
+    await callback.message.answer(f"🆘 للتواصل مع الدعم:\n{link}", parse_mode=None)
 
 
 @router.callback_query(F.data == "referral")
@@ -149,7 +149,8 @@ async def cb_referral(callback: CallbackQuery):
         "🎁 ادعُ أصدقاءك إلى المتجر!\n\n"
         "شارك هذا الرابط مع أصدقائك. عند أول اشتراك لصديقك بالبوت تحصل على نقطة ولاء، "
         "وعند إتمامه أول عملية شراء كاملة تحصل تلقائيًا على بطاقة خصم عشوائية بين 10-20٪!\n\n"
-        f"{link}"
+        f"{link}",
+        parse_mode=None,
     )
 
 
