@@ -61,6 +61,24 @@ async def send_welcome(bot, chat_id: int, number: int, is_new: bool):
     await bot.send_message(chat_id=chat_id, text=text)
 
 
+async def notify_admin_new_customer(bot, settings: dict, user):
+    """يُرسل إشعارًا للأدمن عند انضمام زبون جديد لأول مرة فقط (وليس عند كل /start)."""
+    admin_id = settings.get("ADMIN_ID", "").strip()
+    if not admin_id:
+        return
+    username = f"@{user.username}" if user.username else "-"
+    text = (
+        "🆕 زبون جديد بدأ استخدام البوت!\n\n"
+        f"الاسم: {user.full_name or '-'}\n"
+        f"اليوزر: {username}\n"
+        f"معرف تيليجرام: {user.id}"
+    )
+    try:
+        await bot.send_message(chat_id=admin_id, text=text, parse_mode=None)
+    except Exception:
+        logger.exception("فشل إرسال إشعار زبون جديد للأدمن")
+
+
 def _extract_referrer(payload: str, own_id: int) -> str:
     """يستخرج معرف المُحيل من رابط الدعوة (?start=ref123456)."""
     payload = (payload or "").strip()
@@ -71,8 +89,10 @@ def _extract_referrer(payload: str, own_id: int) -> str:
     return ""
 
 
-async def handle_referral_and_welcome(bot, chat_id, user_id: int, referred_by: str):
-    number, is_new = db.get_customer_number(user_id, referred_by=referred_by)
+async def handle_referral_and_welcome(bot, chat_id, user, referred_by: str):
+    """يحسب رقم الزبون (ويُنشئه إن كان جديدًا)، يرسل إشعار نقطة الولاء للمُحيل،
+    يُعلم الأدمن إن كان هذا زبونًا جديدًا، ثم يرسل رسالة الترحيب له."""
+    number, is_new = db.get_customer_number(user.id, referred_by=referred_by)
 
     if is_new and referred_by:
         try:
@@ -87,6 +107,10 @@ async def handle_referral_and_welcome(bot, chat_id, user_id: int, referred_by: s
             )
         except Exception:
             logger.exception("فشل إرسال إشعار نقطة الولاء للمُحيل user_id=%s", referred_by)
+
+    if is_new:
+        settings = db.get_settings()
+        await notify_admin_new_customer(bot, settings, user)
 
     await send_welcome(bot, chat_id, number, is_new)
 
@@ -106,7 +130,7 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         )
         return
 
-    await handle_referral_and_welcome(message.bot, message.chat.id, message.from_user.id, referred_by)
+    await handle_referral_and_welcome(message.bot, message.chat.id, message.from_user, referred_by)
     await send_main_menu(message.bot, message.chat.id, state)
 
 
@@ -117,7 +141,7 @@ async def cb_checksub(callback: CallbackQuery, state: FSMContext):
         referred_by = data.get("pending_referred_by", "")
         await callback.message.delete()
         await callback.answer("تم التحقق ✅")
-        await handle_referral_and_welcome(callback.bot, callback.message.chat.id, callback.from_user.id, referred_by)
+        await handle_referral_and_welcome(callback.bot, callback.message.chat.id, callback.from_user, referred_by)
         await send_main_menu(callback.bot, callback.message.chat.id, state)
     else:
         await callback.answer("لم يتم العثور على اشتراكك بعد ❌", show_alert=True)
